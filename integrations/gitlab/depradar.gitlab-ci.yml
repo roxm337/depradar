@@ -1,0 +1,80 @@
+# DepRadar dependency gate for GitLab CI/CD (GitLab 17.0+ inputs).
+#
+# include:
+#   - remote: "https://<host>/<path>/integrations/gitlab/depradar.gitlab-ci.yml"
+#     inputs:
+#       url: "https://depradar.example.com"
+#
+# Store the token as a masked, protected CI/CD variable named DEPRADAR_TOKEN. Optionally set
+# DEPRADAR_CLIENT_SHA256 to pin the client script downloaded from your DepRadar server.
+spec:
+  inputs:
+    url:
+      description: DepRadar URL — the API origin, or the web interface URL ending in /api/backend.
+    project:
+      description: DepRadar project name or ID.
+      default: $CI_PROJECT_PATH
+    create-project:
+      description: Create the project if it does not exist (the token needs projects:write).
+      type: boolean
+      default: false
+    fail-on:
+      description: Minimum severity that fails the gate.
+      options: ["none", "low", "medium", "high", "critical"]
+      default: high
+    paths:
+      description: Space-separated manifests or directories. Empty searches the repository.
+      default: ""
+    extra-args:
+      description: Additional depradar-ci flags, such as --new-only or --exclude "fixtures/*".
+      default: ""
+    stage:
+      default: test
+    image:
+      description: Any image with Python 3.9 or newer.
+      default: python:3.12-slim
+    allow-failure:
+      description: Report violations without failing the pipeline.
+      type: boolean
+      default: false
+---
+depradar-gate:
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.image ]]
+  allow_failure: $[[ inputs.allow-failure ]]
+  variables:
+    DEPRADAR_URL: $[[ inputs.url ]]
+    DEPRADAR_PROJECT: $[[ inputs.project ]]
+    GIT_DEPTH: "1"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      python3 -I - <<'PY'
+      import hashlib, os, sys, urllib.request
+      base = os.environ["DEPRADAR_URL"].rstrip("/")
+      if not base.endswith(("/api", "/api/backend")):
+          base += "/api"
+      data = urllib.request.urlopen(base + "/ci/client.py", timeout=60).read()
+      expected = os.environ.get("DEPRADAR_CLIENT_SHA256", "").strip().lower()
+      if expected and hashlib.sha256(data).hexdigest() != expected:
+          sys.exit("depradar_ci.py does not match DEPRADAR_CLIENT_SHA256")
+      with open("depradar_ci.py", "wb") as stream:
+          stream.write(data)
+      PY
+    - |
+      set -- scan --fail-on "$[[ inputs.fail-on ]]" --junit depradar-junit.xml \
+        --markdown depradar.md --json depradar.json
+      if [ "$[[ inputs.create-project ]]" = "true" ]; then set -- "$@" --create-project; fi
+      python3 -I depradar_ci.py "$@" $[[ inputs.extra-args ]] $[[ inputs.paths ]]
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - depradar.md
+      - depradar.json
+      - depradar-junit.xml
+    reports:
+      junit: depradar-junit.xml

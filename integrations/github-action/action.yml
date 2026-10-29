@@ -1,0 +1,114 @@
+name: DepRadar dependency gate
+description: Upload lockfiles to a self-hosted DepRadar, wait for the scan, and enforce the vulnerability gate.
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  url:
+    description: DepRadar URL — the API origin, or the web interface URL ending in /api/backend.
+    required: true
+  token:
+    description: DepRadar API token from Settings → CI/CD tokens. Pass it from a secret.
+    required: true
+  project:
+    description: DepRadar project name or ID.
+    default: ${{ github.repository }}
+  create-project:
+    description: Create the project if it does not exist (the token needs projects:write).
+    default: "false"
+  paths:
+    description: Space-separated manifests or directories. Empty searches the workspace for lockfiles.
+    default: ""
+  exclude:
+    description: Newline-separated glob patterns of manifest paths to skip, such as test fixtures.
+    default: ""
+  mode:
+    description: auto, monitor, or check. auto checks pull requests and merge queues and monitors other events.
+    default: auto
+  fail-on:
+    description: Minimum severity that fails the gate — none, low, medium, high, or critical.
+    default: high
+  fail-on-kev:
+    description: Fail on CVEs listed in the CISA Known Exploited Vulnerabilities catalog.
+    default: "true"
+  fail-on-unknown:
+    description: Fail on advisories that publish no severity.
+    default: "false"
+  epss-threshold:
+    description: Also fail when a CVE's EPSS probability reaches this value (0–1). Empty disables it.
+    default: ""
+  new-only:
+    description: Ignore findings already open in the monitored project, to gate only new risk.
+    default: "false"
+  ignore-acknowledged:
+    description: Ignore findings acknowledged in DepRadar. Accepted risk is always ignored until it expires.
+    default: "false"
+  fail-on-incomplete:
+    description: Fail when scanner coverage is partial, such as private registries or unpinned versions.
+    default: "false"
+  sarif-file:
+    description: Where to write the SARIF report.
+    default: depradar.sarif
+  upload-sarif:
+    description: Upload SARIF to GitHub code scanning. Needs security-events write permission; private repositories need GitHub Code Security.
+    default: "false"
+  timeout:
+    description: Seconds to wait for scans.
+    default: "900"
+  ca-file:
+    description: PEM bundle for a private certificate authority.
+    default: ""
+  allow-insecure-http:
+    description: Allow plain HTTP to a non-local host. Use only on a trusted private network.
+    default: "false"
+
+outputs:
+  result:
+    description: pass, fail, or error.
+    value: ${{ steps.gate.outputs.result }}
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ steps.gate.outputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run DepRadar gate
+      id: gate
+      shell: bash
+      # Inputs arrive as environment variables so values are never interpolated into shell source.
+      env:
+        DEPRADAR_URL: ${{ inputs.url }}
+        DEPRADAR_TOKEN: ${{ inputs.token }}
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_CREATE_PROJECT: ${{ inputs.create-project }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FAIL_ON_KEV: ${{ inputs.fail-on-kev }}
+        INPUT_FAIL_ON_UNKNOWN: ${{ inputs.fail-on-unknown }}
+        INPUT_EPSS_THRESHOLD: ${{ inputs.epss-threshold }}
+        INPUT_NEW_ONLY: ${{ inputs.new-only }}
+        INPUT_IGNORE_ACKNOWLEDGED: ${{ inputs.ignore-acknowledged }}
+        INPUT_FAIL_ON_INCOMPLETE: ${{ inputs.fail-on-incomplete }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_CA_FILE: ${{ inputs.ca-file }}
+        INPUT_ALLOW_INSECURE_HTTP: ${{ inputs.allow-insecure-http }}
+      run: '"$GITHUB_ACTION_PATH/run.sh"'
+
+    # Upload before enforcing the gate so code scanning still receives results from failing builds.
+    - name: Upload SARIF to code scanning
+      if: ${{ always() && inputs.upload-sarif == 'true' && hashFiles(inputs.sarif-file) != '' }}
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+
+    - name: Enforce DepRadar gate
+      if: ${{ always() }}
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.gate.outputs.exit-code }}
+      run: exit "${EXIT_CODE:-2}"
