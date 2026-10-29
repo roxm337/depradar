@@ -25,8 +25,8 @@ live CISA KEV and FIRST EPSS data.
 | ![Findings table filtered by status and severity](docs/screenshots/findings.png) | ![Finding drawer with exploitability, remediation, and location](docs/screenshots/finding-detail.png) |
 | **Project detail** | **Alert channels and policy** |
 | ![Project drawer with open findings, manifests, and highest-priority items](docs/screenshots/project-detail.png) | ![Notifications page with email channel, alert policy, and delivery log](docs/screenshots/notifications.png) |
-| **Scoped CI/CD tokens** | **Phone layout** |
-| ![CI/CD access settings with scoped pipeline tokens](docs/screenshots/ci-cd-access.png) | <img src="docs/screenshots/mobile-overview.png" alt="Risk overview on a phone" width="260"> |
+
+![CI/CD access settings with scoped pipeline tokens](docs/screenshots/ci-cd-access.png)
 
 ## Run with Docker Compose
 
