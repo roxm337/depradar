@@ -1,0 +1,44 @@
+[project]
+name = "depradar-backend"
+version = "0.2.0"
+description = "Single-owner dependency vulnerability monitoring"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn==0.52.3",
+  "sqlalchemy==2.0.52",
+  "alembic==1.20.1",
+  "psycopg[binary]==3.3.6",
+  "pydantic-settings==2.15.0",
+  "httpx==0.28.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "mypy>=1.15,<2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/depradar"]
+
+[project.scripts]
+depradar = "depradar.interfaces.cli:main"
+depradar-worker = "depradar.interfaces.worker:main"
+depradar-ci = "depradar.ci_client:main"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["postgres: requires DEPRADAR_TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
