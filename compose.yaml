@@ -1,0 +1,116 @@
+name: depradar
+
+x-app: &app
+  build:
+    context: ./backend
+    target: app
+  environment: &app-env
+    DEPRADAR_DATABASE_URL: postgresql+psycopg://depradar:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/depradar
+    DEPRADAR_STORAGE_DIR: /data/inventories
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+
+services:
+  db:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: depradar
+      POSTGRES_DB: depradar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [app]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U depradar -d depradar"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *app
+    command: [alembic, upgrade, head]
+    networks: [app]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    environment:
+      <<: *app-env
+      DEPRADAR_BOOTSTRAP_TOKEN: ${DEPRADAR_BOOTSTRAP_TOKEN:?Set DEPRADAR_BOOTSTRAP_TOKEN in .env}
+      DEPRADAR_ALLOWED_ORIGIN: ${DEPRADAR_ALLOWED_ORIGIN:-http://localhost:8000}
+      DEPRADAR_SECURE_COOKIES: ${DEPRADAR_SECURE_COOKIES:-false}
+      DEPRADAR_SMTP_PASSWORD: ${DEPRADAR_SMTP_PASSWORD:-}
+      DEPRADAR_TELEGRAM_BOT_TOKEN: ${DEPRADAR_TELEGRAM_BOT_TOKEN:-}
+      DEPRADAR_DASHBOARD_URL: ${DEPRADAR_DASHBOARD_URL:-http://localhost:8000}
+    ports:
+      # Override with DEPRADAR_API_PORT when another local stack already uses 8000.
+      - 127.0.0.1:${DEPRADAR_API_PORT:-8000}:8000
+    volumes:
+      - inventories:/data/inventories
+      - backups:/data/backups
+    networks: [app, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: [depradar-worker]
+    environment:
+      <<: *app-env
+      DEPRADAR_SCANNER_URL: http://scanner:8001
+      DEPRADAR_SMTP_PASSWORD: ${DEPRADAR_SMTP_PASSWORD:-}
+      DEPRADAR_TELEGRAM_BOT_TOKEN: ${DEPRADAR_TELEGRAM_BOT_TOKEN:-}
+      DEPRADAR_DASHBOARD_URL: ${DEPRADAR_DASHBOARD_URL:-http://localhost:8000}
+    volumes:
+      - inventories:/data/inventories
+    networks: [app, scan]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      scanner:
+        condition: service_healthy
+
+  scanner:
+    build:
+      context: ./backend
+      target: scanner
+    # No env_file, credentials, published port, host mounts, or Docker socket.
+    networks: [scan]
+    user: 10001:10001
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+networks:
+  app:
+    internal: true
+  egress: {}
+  scan: {}
+
+volumes:
+  postgres-data: {}
+  inventories: {}
+  backups: {}

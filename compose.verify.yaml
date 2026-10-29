@@ -1,0 +1,80 @@
+# Disposable integration environment. No production env_file, credentials, or data volumes.
+name: depradar-verify
+
+services:
+  db:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: depradar
+      POSTGRES_PASSWORD: verification-only
+      POSTGRES_DB: depradar_test
+    networks: [test]
+    tmpfs:
+      - /var/lib/postgresql/data:size=512m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U depradar -d depradar_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  scanner:
+    build:
+      context: ./backend
+      target: scanner
+    networks: [scan]
+    read_only: true
+    user: 10001:10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    networks: [test]
+
+  telegram:
+    build:
+      context: ./backend
+      target: tests
+    command: [uvicorn, tests.telegram_fixture:app, --host, 0.0.0.0, --port, "8002"]
+    networks: [test]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  tests:
+    build:
+      context: ./backend
+      target: tests
+    environment:
+      DEPRADAR_TEST_DATABASE_URL: postgresql+psycopg://depradar:verification-only@db:5432/depradar_test
+      DEPRADAR_LIVE_SCANNER_URL: http://scanner:8001
+      DEPRADAR_TELEGRAM_FIXTURE_URL: http://telegram:8002
+      DEPRADAR_E2E: "1"
+    command: [pytest, -q, -o, cache_dir=/tmp/pytest-cache, --junitxml=/tmp/integration.xml]
+    networks: [test, scan]
+    depends_on:
+      db:
+        condition: service_healthy
+      scanner:
+        condition: service_healthy
+      telegram:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+networks:
+  test:
+    internal: true
+  scan: {}
