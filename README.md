@@ -13,6 +13,21 @@ monitored state. One owner account administers the installation; team accounts a
 Uploading an inventory records what was submitted; rechecking it does not refresh source code or
 prove deployed state.
 
+## Screenshots
+
+Captured from a demo installation with fictional client projects, real OSV-Scanner results, and
+live CISA KEV and FIRST EPSS data.
+
+![Risk overview: open findings by severity, exploitation signals, and the projects most exposed](docs/screenshots/overview.png)
+
+| Findings across every project | Finding detail with fix versions and EPSS |
+| --- | --- |
+| ![Findings table filtered by status and severity](docs/screenshots/findings.png) | ![Finding drawer with exploitability, remediation, and location](docs/screenshots/finding-detail.png) |
+| **Project detail** | **Alert channels and policy** |
+| ![Project drawer with open findings, manifests, and highest-priority items](docs/screenshots/project-detail.png) | ![Notifications page with email channel, alert policy, and delivery log](docs/screenshots/notifications.png) |
+| **Scoped CI/CD tokens** | **Phone layout** |
+| ![CI/CD access settings with scoped pipeline tokens](docs/screenshots/ci-cd-access.png) | <img src="docs/screenshots/mobile-overview.png" alt="Risk overview on a phone" width="260"> |
+
 ## Run with Docker Compose
 
 Requirements: Docker with a running daemon and Compose, plus network access for image/package
