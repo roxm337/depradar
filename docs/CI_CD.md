@@ -145,10 +145,15 @@ passed explicitly. `--exclude` patterns use shell globbing on repository-relativ
 | `--sarif`, `--junit`, `--markdown`, `--json` | — | Report files |
 | `--no-summary` | off | Skip appending Markdown to `$GITHUB_STEP_SUMMARY` |
 
-`depradar-ci evaluate SCAN_ID ...` re-evaluates finished scans with different policy flags.
+`depradar-ci evaluate SCAN_ID ...` re-evaluates finished scans with different policy flags. Each
+scan keeps the severity, advisories, and fixes it detected, so a later rescan never rewrites an
+earlier result; owner decisions (acknowledgement, accepted risk) and cached KEV/EPSS data are
+applied as they are now.
 
 **Exit codes:** `0` gate passed · `1` policy violation · `2` error (authentication,
-configuration, unreachable server, failed or replaced scan, timeout).
+configuration, unreachable server, malformed server response, unreadable manifest or unwritable
+report file, failed or replaced scan, timeout). `--timeout` bounds the whole wait, including each
+status request.
 
 ## Gate policy
 
