@@ -1,4 +1,4 @@
-import type { ApiToken, Finding, Project, Scan } from "@/lib/api";
+import type { ApiToken, Finding, Inventory, Project, Scan } from "@/lib/api";
 
 export const SEVERITIES = ["critical", "high", "medium", "low", "unknown"] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -69,6 +69,57 @@ export function primaryAdvisory(ids: string[]) {
 export function latestScan(scans: Scan[], projectId: string) {
   return scans.find((scan) => scan.project_id === projectId);
 }
+
+const newestFirst = (a: { created_at: string; id: string }, b: { created_at: string; id: string }) =>
+  Date.parse(b.created_at) - Date.parse(a.created_at) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+
+/** The current monitored snapshot of each manifest path, newest first. */
+export function latestPerTarget(inventories: Inventory[], projectId: string) {
+  const current = new Map<string, Inventory>();
+  for (const row of inventories.filter((inventory) => inventory.project_id === projectId).sort(newestFirst)) {
+    if (!current.has(row.target_path)) current.set(row.target_path, row);
+  }
+  return [...current.values()];
+}
+
+export type CoverageState = "none" | "unknown" | "unscanned" | "pending" | "incomplete" | "verified";
+export type Coverage = { state: CoverageState; manifests: Inventory[]; verified: number; latest: Scan | undefined };
+
+/**
+ * Whether the latest monitor scan of every current manifest finished with complete coverage.
+ * CI check scans never describe monitored state, and an empty finding list alone proves nothing.
+ */
+export function projectCoverage(projectId: string, inventories: Inventory[], scans: Scan[]): Coverage {
+  const manifests = latestPerTarget(inventories, projectId);
+  const monitorScans = scans.filter((scan) => scan.project_id === projectId && scan.mode !== "check" && scan.status !== "superseded").sort(newestFirst);
+  const latest = monitorScans[0];
+  if (!manifests.length) return { state: monitorScans.length ? "unknown" : "none", manifests, verified: 0, latest };
+  const states = manifests.map((manifest) => {
+    const scan = monitorScans.find((row) => row.inventory_id === manifest.id);
+    if (!scan) return "unscanned";
+    if (scan.status === "queued" || scan.status === "running") return "pending";
+    return scan.status === "succeeded" && scan.complete ? "verified" : "incomplete";
+  });
+  const verified = states.filter((state) => state === "verified").length;
+  const state = (["incomplete", "unscanned", "pending"] as const).find((value) => states.includes(value)) ?? "verified";
+  return { state, manifests, verified, latest };
+}
+
+/** Workspace-wide coverage: verified only when every project with manifests is verified. */
+export function workspaceCoverage(projects: Project[], inventories: Inventory[], scans: Scan[]): CoverageState {
+  const states = projects.map((project) => projectCoverage(project.id, inventories, scans).state);
+  if (!states.length || states.every((state) => state === "none")) return "none";
+  return (["incomplete", "unknown", "unscanned", "pending"] as const).find((value) => states.includes(value)) ?? (states.includes("none") ? "unscanned" : "verified");
+}
+
+export const coverageLabel: Record<CoverageState, string> = {
+  none: "No manifests",
+  unknown: "Coverage unknown",
+  unscanned: "Not scanned yet",
+  pending: "Scan in progress",
+  incomplete: "Incomplete coverage",
+  verified: "Clear",
+};
 
 export function scanTone(scan: Scan | undefined) {
   if (!scan) return "";

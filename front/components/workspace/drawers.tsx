@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { byPriority, cadence, countBySeverity, dateTime, monogram, primaryAdvisory, relativeTime, scanLabel, scanTone, shortDate } from "@/components/workspace/format";
+import { byPriority, cadence, countBySeverity, dateTime, monogram, primaryAdvisory, projectCoverage, relativeTime, scanLabel, scanTone, shortDate, type CoverageState } from "@/components/workspace/format";
 import { CopyButton, Drawer, Empty, Pkg, Sev, StackBar, Switch } from "@/components/workspace/ui";
 import { api, type Finding, type FindingDecision, type Project } from "@/lib/api";
 
@@ -118,6 +118,15 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
 
 type Tab = "overview" | "manifests" | "scans" | "settings";
 
+const quietProject: Record<CoverageState, (verified: number, total: number) => string> = {
+  verified: () => "The latest complete scan of every monitored manifest found no known vulnerabilities.",
+  pending: (verified, total) => `A scan is still running; ${verified} of ${total} manifests are confirmed clear so far.`,
+  incomplete: (verified, total) => `Only ${verified} of ${total} manifests are confirmed clear. A latest scan failed or had coverage gaps; see Scans, then rescan.`,
+  unscanned: (verified, total) => `Only ${verified} of ${total} manifests are confirmed clear. The rest have not been scanned yet.`,
+  unknown: () => "Manifest coverage could not be determined from this API version.",
+  none: () => "Upload a lockfile or connect a pipeline to run the first scan.",
+};
+
 export function ProjectDrawer() {
   const { projects, projectId, setProjectId } = useWorkspace();
   const project = projects.find((row) => row.id === projectId);
@@ -131,8 +140,9 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
   const [tab, setTab] = useState<Tab>("overview");
   const open = workspace.findings.filter((finding) => finding.project_id === project.id && finding.status === "open").sort(byPriority);
   const counts = countBySeverity(open);
-  const manifests = [...new Map(workspace.inventories.filter((row) => row.project_id === project.id).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).map((row) => [row.target_path, row])).values()];
   const scans = workspace.scans.filter((scan) => scan.project_id === project.id);
+  const coverage = projectCoverage(project.id, workspace.inventories, scans);
+  const manifests = coverage.manifests;
   const latest = scans[0];
 
   return (
@@ -154,7 +164,7 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
           {open.length > 0 && <StackBar counts={counts} total={open.length}/>}
           <section className="block">
             <h3 className="block-title">Highest priority</h3>
-            {open.length ? <div className="list">{open.slice(0, 6).map((finding) => <button key={finding.id} className="list-row" onClick={() => { workspace.setProjectId(null); workspace.setFindingId(finding.id); }}><Sev value={finding.severity}/><span className="cell-main"><Pkg name={finding.package_name} version={finding.package_version}/><small>{primaryAdvisory(finding.advisory_ids)} · {finding.target_path}</small></span><Icon name="chevron" size={15}/></button>)}</div> : <Empty title="No open findings" text={latest ? "The latest complete scans found no known vulnerabilities." : "Upload a lockfile or connect a pipeline to run the first scan."}/>}
+            {open.length ? <div className="list">{open.slice(0, 6).map((finding) => <button key={finding.id} className="list-row" onClick={() => { workspace.setProjectId(null); workspace.setFindingId(finding.id); }}><Sev value={finding.severity}/><span className="cell-main"><Pkg name={finding.package_name} version={finding.package_version}/><small>{primaryAdvisory(finding.advisory_ids)} · {finding.target_path}</small></span><Icon name="chevron" size={15}/></button>)}</div> : <Empty title={coverage.state === "verified" ? "No open findings" : "No known open findings"} text={quietProject[coverage.state](coverage.verified, manifests.length)}/>}
           </section>
         </>}
         {tab === "manifests" && <section className="block">

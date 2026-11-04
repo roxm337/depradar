@@ -4,14 +4,24 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { Radar } from "@/components/radar";
 import { useWorkspace } from "@/components/workspace/context";
-import { byPriority, countBySeverity, primaryAdvisory, relativeTime, scanLabel, scanTone, SEVERITIES, severityOf, severityRank } from "@/components/workspace/format";
+import { byPriority, countBySeverity, coverageLabel, primaryAdvisory, projectCoverage, relativeTime, scanLabel, scanTone, SEVERITIES, severityOf, severityRank, workspaceCoverage, type CoverageState } from "@/components/workspace/format";
 import { Empty, PageHead, Pkg, Sev, Sheet, SkeletonRows, StackBar } from "@/components/workspace/ui";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
+// No open findings is only a clean bill of health when every current manifest has a complete scan.
+const quietCoverage: Record<CoverageState, { title: string; text: string }> = {
+  verified: { title: "Nothing needs attention", text: "Every monitored manifest is clear of known vulnerabilities as of its latest complete scan. DepRadar keeps rechecking them as advisories are published." },
+  pending: { title: "No known open findings yet", text: "Scans are still running, so coverage is not confirmed. This updates when they finish." },
+  incomplete: { title: "No known open findings", text: "Some latest scans failed or had coverage gaps, so those manifests are not confirmed clear. Open the affected projects to review and rescan." },
+  unscanned: { title: "No known open findings", text: "Some projects or manifests have not been scanned yet, so they are not confirmed clear." },
+  unknown: { title: "No known open findings", text: "Manifest coverage could not be determined from this API version, so nothing is confirmed clear." },
+  none: { title: "No manifests yet", text: "Upload a lockfile or connect a pipeline to run the first scan." },
+};
+
 export default function OverviewPage() {
   const workspace = useWorkspace();
-  const { findings, projects, scans, deliveries, tokens, health, now, ready } = workspace;
+  const { findings, projects, scans, inventories, deliveries, tokens, health, now, ready } = workspace;
   const open = findings.filter((finding) => finding.status === "open").sort(byPriority);
   const counts = countBySeverity(open);
   const tallest = Math.max(1, ...Object.values(counts));
@@ -23,8 +33,10 @@ export default function OverviewPage() {
   const latest = scans[0];
   const exposure = projects.map((project) => {
     const rows = open.filter((finding) => finding.project_id === project.id);
-    return { project, rows, counts: countBySeverity(rows), weight: rows.reduce((sum, finding) => sum + 10 ** severityRank(finding.severity), 0), scan: scans.find((scan) => scan.project_id === project.id) };
+    const coverage = projectCoverage(project.id, inventories, scans);
+    return { project, rows, counts: countBySeverity(rows), weight: rows.reduce((sum, finding) => sum + 10 ** severityRank(finding.severity), 0), coverage, scan: coverage.latest };
   }).sort((a, b) => b.weight - a.weight || a.project.name.localeCompare(b.project.name));
+  const coverage = workspaceCoverage(projects, inventories, scans);
   const checks = scans.filter((scan) => scan.mode === "check" && now && now - Date.parse(scan.created_at) < 7 * 86_400_000).length;
   const activity = [
     ...scans.slice(0, 8).map((scan) => ({ id: scan.id, at: scan.created_at, tone: scanTone(scan), title: `${scanLabel(scan)}${scan.mode === "check" ? " · CI check" : ""}`, detail: `${projects.find((project) => project.id === scan.project_id)?.name ?? "Project"} · ${plural(scan.package_count, "package")}` })),
@@ -36,7 +48,7 @@ export default function OverviewPage() {
     ? <>Create a project and upload a lockfile, or connect a pipeline, to start monitoring.</>
     : open.length
       ? <><strong>{plural(open.length, "open finding")}</strong> across {affected} of {plural(projects.length, "project")}. {undecided ? `${undecided} still need a decision.` : "Every finding has a decision."}</>
-      : <>No open findings across {plural(projects.length, "project")}.{latest ? ` Last scan ${relativeTime(now, latest.created_at)}.` : ""}</>;
+      : <>{coverage === "verified" ? "No open findings" : "No known open findings"} across {plural(projects.length, "project")}.{coverage !== "verified" && coverage !== "none" ? ` ${coverageLabel[coverage]}, so not every manifest is confirmed clear.` : ""}{latest ? ` Last scan ${relativeTime(now, latest.created_at)}.` : ""}</>;
 
   return (
     <>
@@ -44,7 +56,7 @@ export default function OverviewPage() {
 
       <section className="exposure" aria-label="Dependency exposure">
         <section>
-          <span className="eyebrow"><span className={`dot dot-live ${open.length ? "dot-bad" : "dot-ok"}`}/>Open exposure</span>
+          <span className="eyebrow"><span className={`dot dot-live ${open.length ? "dot-bad" : coverage === "verified" ? "dot-ok" : "dot-warn"}`}/>Open exposure</span>
           <div className="figure"><strong>{ready ? open.length : "–"}</strong><span><b>open findings</b>in {plural(affected, "project")}</span></div>
           <div className="ladder">{SEVERITIES.map((level) => <div className="ladder-row" key={level}><span>{level}</span><span className="track"><i className={`bar-${level}`} style={{ width: `${(counts[level] / tallest) * 100}%` }}/></span><b>{counts[level]}</b></div>)}</div>
         </section>
@@ -84,14 +96,14 @@ export default function OverviewPage() {
                   ))}
                 </tbody>
               </table>
-              {ready && !open.length && <Empty title="Nothing needs attention" text="Every monitored manifest is clear of known vulnerabilities. DepRadar keeps rechecking them as advisories are published."/>}
+              {ready && !open.length && <Empty title={quietCoverage[coverage].title} text={quietCoverage[coverage].text}/>}
             </div>
           </Sheet>
           <Sheet title="Project exposure" actions={<Link className="btn btn-ghost btn-sm" href="/projects">All projects<Icon name="arrow" size={14}/></Link>}>
             <div className="risk-list">
-              {exposure.slice(0, 5).map(({ project, rows, counts: projectCounts, scan }) => (
+              {exposure.slice(0, 5).map(({ project, rows, counts: projectCounts, coverage: projectState, scan }) => (
                 <button key={project.id} className="risk-row" onClick={() => workspace.setProjectId(project.id)}>
-                  <b>{project.name}</b><span className={`risk-count ${rows.length ? `sev-${SEVERITIES.find((level) => projectCounts[level]) ?? "unknown"}` : "muted"}`}>{rows.length ? `${rows.length} open` : "Clear"}</span>
+                  <b>{project.name}</b><span className={`risk-count ${rows.length ? `sev-${SEVERITIES.find((level) => projectCounts[level]) ?? "unknown"}` : "muted"}`}>{rows.length ? `${rows.length} open` : coverageLabel[projectState.state]}</span>
                   <StackBar counts={projectCounts} total={rows.length}/>
                   <small>{scan ? `${scanLabel(scan)} ${relativeTime(now, scan.created_at)}` : "Not scanned yet"}{project.monitoring_enabled ? "" : " · monitoring paused"}</small>
                 </button>
