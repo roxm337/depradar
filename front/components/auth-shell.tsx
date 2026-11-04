@@ -27,7 +27,15 @@ export function AuthShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function ApiUnavailable({ detail, onRetry }: { detail: string; onRetry: () => void }) {
+export function ApiUnavailable({ detail, onRetry, signedIn = false }: { detail: string; onRetry: () => void; signedIn?: boolean }) {
+  if (signedIn) {
+    return (
+      <>
+        <div className="auth-heading"><span className="auth-icon warning"><Icon name="server" size={19}/></span><h2>Workspace data didn’t load</h2><p>You are signed in, but loading projects and findings failed{detail ? `: ${detail}` : "."} Nothing is shown rather than an incomplete picture.</p></div>
+        <button className="btn btn-primary auth-submit" onClick={onRetry}><Icon name="refresh" size={16}/>Try again</button>
+      </>
+    );
+  }
   return (
     <>
       <div className="auth-heading"><span className="auth-icon warning"><Icon name="server" size={19}/></span><h2>Can’t reach DepRadar</h2><p>{detail || "The web app could not reach the DepRadar API. Start the backend, then try again."}</p></div>

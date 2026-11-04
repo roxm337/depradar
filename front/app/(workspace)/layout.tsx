@@ -15,7 +15,7 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
 function Gate({ children }: { children: ReactNode }) {
   const workspace = useWorkspace();
   if (workspace.session !== "ready") {
-    return <AuthShell>{workspace.session === "offline" ? <ApiUnavailable detail={workspace.error} onRetry={() => void workspace.actions.refresh()}/> : <Checking label="Loading your workspace…"/>}</AuthShell>;
+    return <AuthShell>{workspace.session === "offline" ? <ApiUnavailable detail={workspace.error} signedIn={workspace.dataFailed} onRetry={() => void workspace.actions.refresh()}/> : <Checking label="Loading your workspace…"/>}</AuthShell>;
   }
   return (
     <Shell>
