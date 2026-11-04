@@ -125,8 +125,8 @@ def findings(
 
 
 @owner.delete("/projects/{project_id}", status_code=204)
-def remove_project(project_id: UUID, db: Db) -> None:
-    projects.delete_project(db, str(project_id))
+def remove_project(project_id: UUID, db: Db, settings: Config) -> None:
+    projects.delete_project(db, str(project_id), settings.dashboard_url)
 
 
 @owner.put("/projects/{project_id}/monitoring")

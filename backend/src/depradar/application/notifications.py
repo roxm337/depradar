@@ -71,6 +71,20 @@ def source(db: Session, delivery: Delivery) -> tuple[ChangeEvent | None, Finding
     return change, db.get(Finding, change.finding_id) if change else None
 
 
+def suppressed(db: Session, delivery: Delivery) -> bool:
+    """One eligibility rule for queued alert work, applied when digesting and when sending."""
+    change, finding = source(db, delivery)
+    if (
+        finding
+        and change
+        and change.kind != "resolved"
+        and (finding.workflow_status != "open" or finding.status == "resolved")
+    ):
+        return True
+    project = db.get(Project, delivery.project_id) if delivery.project_id else None
+    return project is not None and not project.notifications_enabled
+
+
 def entry(db: Session, finding: Finding, change: str = "") -> Item:
     project = db.get(Project, finding.project_id)
     return item_from(finding, project.name if project else "Project", change)
@@ -130,6 +144,17 @@ def compose(
     if change and finding:
         return alert_message(entry(db, finding, change.kind), details)
     return Message(delivery.kind, delivery.subject, delivery.subject, delivery.body)
+
+
+def rebuild_digest(db: Session, digest: Delivery, dashboard_url: str) -> None:
+    """Re-render a queued digest's stored text from the children it still bundles."""
+    policy = db.get(NotificationPolicy, 1)
+    children = db.scalars(select(Delivery).where(Delivery.batch_id == digest.id))
+    sources = [source(db, child) for child in children]
+    items = [entry(db, found, change.kind) for change, found in sources if change and found]
+    message = digest_message(items, bool(policy and policy.include_details))
+    digest.subject = message.subject[:200]
+    digest.body = plain(message, dashboard_url)
 
 
 def route_outbox(db: Session, settings: Settings) -> int:
@@ -231,17 +256,12 @@ def prepare_digest(db: Session, settings: Settings) -> None:
         active: list[Delivery] = []
         items: list[Item] = []
         for delivery in deliveries:
-            change, finding = source(db, delivery)
-            if (
-                finding
-                and (finding.workflow_status != "open" or finding.status == "resolved")
-                and change
-                and change.kind != "resolved"
-            ):
+            if suppressed(db, delivery):
                 delivery.status = "cancelled"
-            else:
-                active.append(delivery)
-                items += [entry(db, finding, change.kind)] if change and finding else []
+                continue
+            change, finding = source(db, delivery)
+            active.append(delivery)
+            items += [entry(db, finding, change.kind)] if change and finding else []
         deliveries = active
         if deliveries:
             message = digest_message(items, policy.include_details)
@@ -251,6 +271,21 @@ def prepare_digest(db: Session, settings: Settings) -> None:
                 delivery.status = "bundled"
                 delivery.batch_id = digest.id
     policy.next_digest_at = next_digest(utcnow(), policy.timezone, policy.digest_hour)
+
+
+def interrupted(db: Session, delivery: Delivery) -> None:
+    """Reclaim a delivery whose worker stopped mid-send; provider acceptance is unknown."""
+    for attempt in db.scalars(
+        select(DeliveryAttempt).where(
+            DeliveryAttempt.delivery_id == delivery.id, DeliveryAttempt.status == "sending"
+        )
+    ):
+        attempt.status = "uncertain"
+        attempt.completed_at = utcnow()
+        attempt.error_code = "worker_interrupted_after_send_started"
+    delivery.status = "queued"
+    delivery.lease_token = None
+    delivery.lease_until = None
 
 
 def deliver_once(
@@ -272,6 +307,11 @@ def deliver_once(
         )
         if delivery is None:
             return False
+        if delivery.status == "sending":
+            # An expired lease means a worker stopped mid-send. Close that attempt before any
+            # branch below makes the delivery terminal or defers it, so history never keeps an
+            # active attempt and the row cannot be re-claimed in a tight loop while deferred.
+            interrupted(db, delivery)
         connector = db.get(Connector, delivery.connector_id)
         if (
             connector is None
@@ -289,7 +329,9 @@ def deliver_once(
             delivery.available_at = connector.next_send_at
             return True
         policy = db.get(NotificationPolicy, 1)
-        if policy and delivery.kind not in {"verification", "test", "summary", "digest"}:
+        # Digests honor quiet hours at send time too: a digest prepared before the window and
+        # delayed by backoff must still wait for the window to end.
+        if policy and delivery.kind not in {"verification", "test", "summary"}:
             allowed_at = quiet_end_at(utcnow(), policy)
             if allowed_at > utcnow():
                 delivery.available_at = allowed_at
@@ -297,44 +339,17 @@ def deliver_once(
         active: list[Delivery] = []
         if delivery.kind == "digest":
             for child in db.scalars(select(Delivery).where(Delivery.batch_id == delivery.id)):
-                change, finding = source(db, child)
-                if (
-                    finding
-                    and change
-                    and change.kind != "resolved"
-                    and (finding.workflow_status != "open" or finding.status == "resolved")
-                ):
+                if suppressed(db, child):
                     child.status = "cancelled"
                 else:
                     active.append(child)
             if not active:
                 delivery.status = "cancelled"
                 return True
-        # Re-evaluate muting at send time as well as routing time.
-        if delivery.outbox_id:
-            change, finding = source(db, delivery)
-            if (
-                finding
-                and (finding.workflow_status != "open" or finding.status == "resolved")
-                and change
-                and change.kind != "resolved"
-            ):
-                delivery.status = "cancelled"
-                return True
-        if delivery.status == "sending":
-            previous_attempt = db.scalar(
-                select(DeliveryAttempt)
-                .where(
-                    DeliveryAttempt.delivery_id == delivery.id,
-                    DeliveryAttempt.status == "sending",
-                )
-                .order_by(DeliveryAttempt.attempt_number.desc())
-                .limit(1)
-            )
-            if previous_attempt:
-                previous_attempt.status = "uncertain"
-                previous_attempt.completed_at = utcnow()
-                previous_attempt.error_code = "worker_interrupted_after_send_started"
+        # Re-evaluate muting and project alert settings at send time as well as routing time.
+        if delivery.outbox_id and suppressed(db, delivery):
+            delivery.status = "cancelled"
+            return True
         delivery.status = "sending"
         delivery.attempts += 1
         attempt_number = (

@@ -101,8 +101,11 @@ overrides are read and updated at `/api/projects/{id}/notifications` with `enabl
 `immediate_min_severity` (`inherit`, `low`, `medium`, `high`, or `critical`).
 
 Verification produces one initial summary. Events predating verification are not replayed as a flood
-of individual alerts. Unchanged scans do not produce repeated opened events. The worker rechecks
-acknowledgement/risk status before sending queued alerts and digests.
+of individual alerts. Unchanged scans do not produce repeated opened events. When it prepares a
+digest and again just before sending, the worker rechecks acknowledgement/risk status and the
+project's `enabled` alert setting, so disabling a project also drops its queued alerts. Quiet hours
+apply to digests at send time as well, including retries. Deleting a project removes its alerts
+from unsent digests, which still deliver the other projects' alerts; sent digests are not replayed.
 
 ## Scheduled vulnerability monitoring
 

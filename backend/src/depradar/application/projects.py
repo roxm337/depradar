@@ -46,8 +46,8 @@ def list_projects(
     )
 
 
-def delete_project(db: Session, project_id: str) -> None:
-    purge_project(db, get_project(db, project_id))
+def delete_project(db: Session, project_id: str, dashboard_url: str = "") -> None:
+    purge_project(db, get_project(db, project_id), dashboard_url)
     db.commit()
 
 

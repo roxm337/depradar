@@ -3,10 +3,11 @@
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from depradar.application.errors import Conflict
+from depradar.application.notifications import rebuild_digest
 from depradar.application.ports import InventoryStore
 from depradar.domain.entities import (
     ApiToken,
@@ -26,7 +27,7 @@ from depradar.domain.entities import (
 )
 
 
-def purge_project(db: Session, project: Project) -> None:
+def purge_project(db: Session, project: Project, dashboard_url: str = "") -> None:
     """Delete a project and everything recorded about it; its files are collected later."""
     scans = select(Scan.id).where(Scan.project_id == project.id)
     active_scan = db.scalar(
@@ -62,9 +63,21 @@ def purge_project(db: Session, project: Project) -> None:
         )
     if active_scan or active_delivery:
         raise Conflict("Wait for in-flight scans or deliveries before deleting this project")
-    # Remove aggregate digests that could otherwise retain deleted project details.
-    if batches:
-        db.execute(delete(Delivery).where(Delivery.id.in_(batches)))
+    # A digest bundles alerts from several projects. An unsent digest keeps the other
+    # projects' alerts and is re-rendered without this one. A sent or terminal digest is
+    # removed so its text cannot retain deleted details; its other children are not replayed.
+    unsent: list[Delivery] = []
+    for digest in db.scalars(select(Delivery).where(Delivery.id.in_(set(batches)))):
+        survivor = db.scalar(
+            select(Delivery.id)
+            .where(Delivery.batch_id == digest.id, Delivery.project_id != project.id)
+            .limit(1)
+        )
+        if survivor and digest.status in {"queued", "sending"}:
+            unsent.append(digest)
+            continue
+        db.execute(update(Delivery).where(Delivery.batch_id == digest.id).values(batch_id=None))
+        db.execute(delete(Delivery).where(Delivery.id == digest.id))
     finding_ids = select(Finding.id).where(Finding.project_id == project.id)
     changes = select(ChangeEvent.id).where(ChangeEvent.finding_id.in_(finding_ids))
     outbox = select(OutboxEvent.id).where(OutboxEvent.change_id.in_(changes))
@@ -83,6 +96,8 @@ def purge_project(db: Session, project: Project) -> None:
             db.add(FileDeletion(inventory_id=inventory.id))
         db.delete(inventory)
     db.flush()
+    for digest in unsent:
+        rebuild_digest(db, digest, dashboard_url)
     db.delete(project)
 
 

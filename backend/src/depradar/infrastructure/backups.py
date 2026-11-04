@@ -300,6 +300,13 @@ def restore_backup(factory: sessionmaker[Session], storage: Path, source: Path) 
                                 lease_until=None,
                                 last_error="restore_delivery_state_uncertain",
                             )
+                        if table.name == "delivery_attempt" and row["status"] == "sending":
+                            # Provider acceptance is unknown, so never claim a failed send.
+                            row.update(
+                                status="uncertain",
+                                completed_at=utcnow(),
+                                error_code="restore_delivery_state_uncertain",
+                            )
                     if rows:
                         db.execute(insert(table), rows)
                 for row in database["inventory"]:
