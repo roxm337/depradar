@@ -5,8 +5,11 @@
 #     inputs:
 #       url: "https://depradar.example.com"
 #
-# Store the token as a masked, protected CI/CD variable named DEPRADAR_TOKEN. Optionally set
-# DEPRADAR_CLIENT_SHA256 to pin the client script downloaded from your DepRadar server.
+# Store the token as a masked, protected CI/CD variable named DEPRADAR_TOKEN. The client script
+# is downloaded from your DepRadar server over HTTPS (redirects are refused); set
+# DEPRADAR_CLIENT_SHA256 to pin it as well. Plain HTTP is accepted only for loopback, or when
+# DEPRADAR_ALLOW_INSECURE_HTTP is "true" on a trusted private network (then also add
+# --allow-insecure-http to extra-args).
 spec:
   inputs:
     url:
@@ -53,11 +56,23 @@ depradar-gate:
   script:
     - |
       python3 -I - <<'PY'
-      import hashlib, os, sys, urllib.request
-      base = os.environ["DEPRADAR_URL"].rstrip("/")
+      import hashlib, os, sys, urllib.parse, urllib.request
+      base = os.environ["DEPRADAR_URL"].strip().rstrip("/")
+      parts = urllib.parse.urlsplit(base)
+      # The downloaded script is executed with the job's variables, so fetch it only over
+      # authenticated transport: HTTPS, loopback, or an explicitly trusted private network.
+      trusted_http = parts.hostname in {"localhost", "127.0.0.1", "::1"} or os.environ.get(
+          "DEPRADAR_ALLOW_INSECURE_HTTP", ""
+      ).lower() == "true"
+      if parts.scheme != "https" and not (parts.scheme == "http" and trusted_http):
+          sys.exit("DEPRADAR_URL must use https:// to download the DepRadar client")
       if not base.endswith(("/api", "/api/backend")):
           base += "/api"
-      data = urllib.request.urlopen(base + "/ci/client.py", timeout=60).read()
+      class NoRedirect(urllib.request.HTTPRedirectHandler):
+          def redirect_request(self, *args, **kwargs):
+              return None  # a redirect could downgrade the transport; fail instead
+      opener = urllib.request.build_opener(NoRedirect())
+      data = opener.open(base + "/ci/client.py", timeout=60).read(8 * 1024 * 1024)
       expected = os.environ.get("DEPRADAR_CLIENT_SHA256", "").strip().lower()
       if expected and hashlib.sha256(data).hexdigest() != expected:
           sys.exit("depradar_ci.py does not match DEPRADAR_CLIENT_SHA256")

@@ -108,15 +108,18 @@ include:
 
 Add `DEPRADAR_TOKEN` as a masked, protected CI/CD variable. The job runs on merge requests,
 the default branch, and tags; publishes JUnit results to the merge request widget; and keeps the
-Markdown and JSON reports as artifacts. It downloads the client from your DepRadar server; set
-`DEPRADAR_CLIENT_SHA256` to pin it. To publish through the CI/CD Catalog, copy the template into
+Markdown and JSON reports as artifacts. It downloads the client from your DepRadar server over
+HTTPS and refuses redirects; set `DEPRADAR_CLIENT_SHA256` to pin it as well. Plain HTTP is
+accepted only for loopback or when `DEPRADAR_ALLOW_INSECURE_HTTP` is `true` on a trusted private
+network. To publish through the CI/CD Catalog, copy the template into
 a component project's `templates/` directory.
 
 ## 5. Any other CI
 
 ```sh
-curl -fsSL "$DEPRADAR_URL/api/ci/client.py" -o depradar_ci.py   # or /api/backend/ci/client.py
-echo "<expected-sha256>  depradar_ci.py" | sha256sum -c -        # optional pinning
+# HTTPS only, no redirects: the script runs with this job's secrets.
+curl -fsS --proto '=https' "$DEPRADAR_URL/api/ci/client.py" -o depradar_ci.py  # or /api/backend/...
+echo "<expected-sha256>  depradar_ci.py" | sha256sum -c -                      # recommended pin
 python3 -I depradar_ci.py scan --fail-on high --junit depradar.xml --sarif depradar.sarif
 ```
 
