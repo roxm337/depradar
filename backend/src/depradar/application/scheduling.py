@@ -28,6 +28,8 @@ def schedule_projects(db: Session) -> int:
             if inventory.target_path in target_paths:
                 continue
             target_paths.add(inventory.target_path)
+            if inventory.retired_at is not None:
+                continue  # the owner retired this manifest; a new upload resumes it
             active = db.scalar(
                 select(Scan.id)
                 .join(Inventory)

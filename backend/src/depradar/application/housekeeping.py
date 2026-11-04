@@ -154,7 +154,9 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
         key = (inventory.project_id, inventory.target_path)
         if inventory.kind == "monitor" and key not in newest:
             newest.add(key)
-            continue
+            # A retired manifest's last snapshot ages out like any other history.
+            if inventory.retired_at is None:
+                continue
         if inventory.created_at >= scan_cutoff:
             continue
         scans = list(db.scalars(select(Scan).where(Scan.inventory_id == inventory.id)))

@@ -187,7 +187,7 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
         .limit(1)
     )
     record_scan_metadata(scan, response)
-    if latest is None or latest.id != inventory.id or newer_scan:
+    if latest is None or latest.id != inventory.id or newer_scan or inventory.retired_at:
         scan.status = "superseded"
         return
     existing = list(

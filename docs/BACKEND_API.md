@@ -121,6 +121,19 @@ independently. Scan history shows completion and errors. Rechecking vulnerabilit
 **not** refresh the dependency list: upload a new inventory when project packages change. GitHub
 sync is intentionally deferred.
 
+### Retiring a manifest
+
+When a manifest is renamed or removed from a repository, its old path keeps being rechecked until
+the owner retires it: `POST /api/projects/{id}/targets/retire`, body
+`{"target_path":"web/package-lock.json"}` (owner session only; API tokens cannot retire). Every
+snapshot of that path gets `retired_at`, scheduled and manual rechecks stop (a manual rescan returns
+409), it no longer counts toward coverage, and its open findings resolve with a `retired` change
+event that sends no alert. Scans already queued for the path are superseded. History is kept and
+ages out under normal retention. Uploading the path again, from the dashboard or CI, creates a new
+snapshot and resumes monitoring. Uploads, including CI pipelines that no longer find a manifest,
+never retire anything on their own. Responds with `target_path`, `retired_inventories`, and
+`resolved_findings`; 404 when no active monitored manifest exists at that path.
+
 ## Service and vulnerability intelligence
 
 `GET /api/operations/health` reports database, worker heartbeat, OSV scanner probe, scan queue,

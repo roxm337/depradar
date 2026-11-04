@@ -59,6 +59,74 @@ def test_initial_migration_up_and_down(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+def test_populated_database_upgrades_from_0003_and_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing rows survive 0004 and 0005 and get the defaults the application relies on."""
+    from alembic import command
+    from alembic.config import Config
+
+    from depradar.config import get_settings
+
+    schema = "migration_data_" + uuid4().hex
+    url = os.environ["DEPRADAR_TEST_DATABASE_URL"]
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    project, inventory, scan = (str(uuid4()) for _ in range(3))
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'SET search_path TO "{schema}"'))
+            connection.commit()
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0003")
+            connection.execute(
+                text(
+                    "INSERT INTO project (id, name, description, created_at, monitoring_enabled,"
+                    " check_interval_hours, notifications_enabled)"
+                    " VALUES (:id, 'Legacy', '', now(), true, 24, true)"
+                ),
+                {"id": project},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO inventory (id, project_id, filename, target_path, sha256,"
+                    " size_bytes, created_at) VALUES (:id, :project, 'package-lock.json',"
+                    " 'web/package-lock.json', :sha, 10, now())"
+                ),
+                {"id": inventory, "project": project, "sha": "0" * 64},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO scan (id, inventory_id, project_id, status, complete,"
+                    " package_count, coverage_notes, created_at)"
+                    " VALUES (:id, :inventory, :project, 'succeeded', true, 3, '[]', now())"
+                ),
+                {"id": scan, "inventory": inventory, "project": project},
+            )
+            connection.commit()
+            command.upgrade(config, "head")
+            row = connection.execute(
+                text("SELECT kind, retired_at FROM inventory WHERE id = :id"), {"id": inventory}
+            ).one()
+            assert tuple(row) == ("monitor", None)
+            mode, results = connection.execute(
+                text("SELECT mode, results FROM scan WHERE id = :id"), {"id": scan}
+            ).one()
+            assert (mode, results) == ("monitor", None)
+            connection.commit()
+            command.downgrade(config, "0003")
+            assert connection.execute(text("SELECT count(*) FROM scan")).scalar_one() == 1
+            assert "retired_at" not in {
+                column["name"] for column in inspect(connection).get_columns("inventory", schema)
+            }
+            connection.commit()
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        engine.dispose()
+        get_settings.cache_clear()
+
+
 def test_backup_restore_drill_on_postgresql(
     harness: Harness, project_id: str, tmp_path: Path
 ) -> None:

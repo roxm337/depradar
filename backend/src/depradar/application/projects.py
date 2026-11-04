@@ -1,13 +1,15 @@
 """Projects, their monitoring and alert settings, and the records listed for them."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from depradar.application.errors import Conflict, Forbidden, NotFound
+from depradar.application.findings import latest_scan, record_change
 from depradar.application.housekeeping import purge_project
+from depradar.application.locking import lock_writes
 from depradar.domain.entities import Finding, Inventory, Job, Project, Scan, utcnow
 from depradar.domain.security import Principal
 
@@ -137,3 +139,49 @@ def list_jobs(db: Session, limit: int, offset: int) -> list[Job]:
             select(Job).order_by(Job.available_at.desc(), Job.id).limit(limit).offset(offset)
         )
     )
+
+
+def retire_target(db: Session, project_id: str, target_path: str) -> dict[str, Any]:
+    """Stop monitoring a manifest that was renamed or removed; only the owner decides this.
+
+    Every snapshot of the path is marked retired, so it is no longer rechecked or counted as
+    coverage, and its open findings resolve without alerts. History is kept, and uploading the
+    path again starts a fresh snapshot that resumes monitoring. Uploads never retire anything.
+    """
+    lock_writes(db)
+    project = get_project(db, project_id)
+    # Serialize with scan result application, which locks the same project row.
+    db.scalar(select(Project).where(Project.id == project.id).with_for_update())
+    monitored = select(Inventory).where(
+        Inventory.project_id == project.id,
+        Inventory.target_path == target_path,
+        Inventory.kind == "monitor",
+    )
+    latest = db.scalar(monitored.order_by(Inventory.created_at.desc(), Inventory.id.desc()))
+    if latest is None or latest.retired_at is not None:
+        raise NotFound("No monitored manifest at this path")
+    now = utcnow()
+    snapshots = list(db.scalars(monitored.where(Inventory.retired_at.is_(None))))
+    for snapshot in snapshots:
+        snapshot.retired_at = now
+    resolved = 0
+    for finding in db.scalars(
+        select(Finding).where(
+            Finding.project_id == project.id,
+            Finding.target_path == target_path,
+            Finding.status == "open",
+        )
+    ):
+        finding.status = "resolved"
+        finding.resolved_at = now
+        scan = latest_scan(db, finding)
+        if scan is not None:
+            # A distinct kind: routing sends no alert, and history never claims it was fixed.
+            record_change(db, finding, scan, "retired")
+        resolved += 1
+    db.commit()
+    return {
+        "target_path": target_path,
+        "retired_inventories": len(snapshots),
+        "resolved_findings": resolved,
+    }

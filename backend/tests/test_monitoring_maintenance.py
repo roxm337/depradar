@@ -211,8 +211,25 @@ def test_retention_keeps_each_monorepo_manifest_and_prunes_old_checks(
         assert db.scalar(select(Scan).where(Scan.inventory_id == check_id)) is None
 
 
-def test_backups_exclude_api_tokens_and_upgrade_revision_0003(
-    harness: Harness, project_id: str, tmp_path: Path
+def as_revision_0004(database: dict, manifest: dict) -> None:
+    for row in database["inventory"]:
+        del row["retired_at"]
+    manifest["revision"] = "0004"
+
+
+def as_revision_0003(database: dict, manifest: dict) -> None:
+    as_revision_0004(database, manifest)
+    del database["api_token"], manifest["row_counts"]["api_token"]
+    for row in database["inventory"]:
+        del row["kind"]
+    for row in database["scan"]:
+        del row["mode"], row["results"]
+    manifest["revision"] = "0003"
+
+
+@pytest.mark.parametrize("legacy_revision", [as_revision_0003, as_revision_0004])
+def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
+    harness: Harness, project_id: str, tmp_path: Path, legacy_revision
 ) -> None:
     import io
     import tarfile
@@ -225,21 +242,15 @@ def test_backups_exclude_api_tokens_and_upgrade_revision_0003(
     assert created.status_code == 201
     current = tmp_path / "current.tar.gz"
     manifest = create_backup(harness.factory, harness.settings.storage_dir, current)
-    assert manifest["revision"] == "0004" and manifest["row_counts"]["api_token"] == 0
-    # Rewrite the archive as revision 0003 would have produced it.
+    assert manifest["revision"] == "0005" and manifest["row_counts"]["api_token"] == 0
+    # Rewrite the populated archive as the older revision would have produced it.
     legacy = tmp_path / "legacy.tar.gz"
     with tarfile.open(current, "r:gz") as source, tarfile.open(legacy, "w:gz") as target:
         files = {m.name: source.extractfile(m).read() for m in source.getmembers()}
         database = json.loads(files["database.json"])
-        del database["api_token"]
-        for row in database["inventory"]:
-            del row["kind"]
-        for row in database["scan"]:
-            del row["mode"], row["results"]
-        files["database.json"] = json.dumps(database).encode()
         old = json.loads(files["manifest.json"])
-        old["revision"] = "0003"
-        del old["row_counts"]["api_token"]
+        legacy_revision(database, old)
+        files["database.json"] = json.dumps(database).encode()
         old["files"]["database.json"] = hashlib.sha256(files["database.json"]).hexdigest()
         files["manifest.json"] = json.dumps(old).encode()
         for name, content in files.items():
@@ -248,10 +259,12 @@ def test_backups_exclude_api_tokens_and_upgrade_revision_0003(
             target.addfile(info, io.BytesIO(content))
     engine, factory = empty_database()
     restored = restore_backup(factory, tmp_path / "restored", legacy)
-    assert restored["revision"] == "0004"
+    assert restored["revision"] == "0005"
     with factory() as db:
         assert {scan.mode for scan in db.scalars(select(Scan))} == {"monitor"}
-        assert db.scalars(select(Inventory)).one().kind == "monitor"
+        inventory = db.scalars(select(Inventory)).one()
+        assert inventory.kind == "monitor" and inventory.retired_at is None
+        assert db.scalars(select(Finding)).one().status == "open"
         assert db.scalar(select(ApiToken)) is None
     engine.dispose()
 

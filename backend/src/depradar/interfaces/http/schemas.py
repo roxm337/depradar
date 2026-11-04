@@ -47,6 +47,17 @@ class InventoryOutput(Row):
     size_bytes: int
     created_at: datetime
     kind: str
+    retired_at: datetime | None
+
+
+class RetireTargetInput(BaseModel):
+    target_path: str = Field(min_length=1, max_length=512)
+
+
+class RetireTargetOutput(BaseModel):
+    target_path: str
+    retired_inventories: int
+    resolved_findings: int
 
 
 class ScanOutput(Row):

@@ -92,6 +92,8 @@ class Inventory(Base):
     created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow)
     # "monitor" inventories define project state; "check" inventories only answer CI gates.
     kind: Mapped[str] = mapped_column(String(20), default="monitor")
+    # Set when the owner retires the manifest; a new upload of the same path resumes monitoring.
+    retired_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
 
 
 class Scan(Base):
