@@ -1,9 +1,18 @@
+# Same uv release as CI, so images install exactly what uv.lock records.
+FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
+
 FROM python:3.12-slim AS app
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy
+ENV PATH=/opt/venv/bin:$PATH
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv sync --locked --no-dev --no-install-project --no-cache
 COPY src ./src
-RUN pip install --no-cache-dir . && useradd --uid 10001 --create-home depradar \
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv sync --locked --no-dev --no-editable --no-cache \
+    && useradd --uid 10001 --create-home depradar \
     && mkdir -p /data/inventories /data/backups && chown -R depradar:depradar /data
 COPY alembic.ini ./
 COPY migrations ./migrations
@@ -37,7 +46,8 @@ CMD ["uvicorn", "depradar.interfaces.scanner_service:app", "--host", "0.0.0.0", 
 
 FROM app AS tests
 USER root
-RUN pip install --no-cache-dir 'pytest>=8,<10' 'ruff>=0.11,<1' 'mypy>=1.15,<2'
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv sync --locked --no-editable --no-cache
 COPY tests ./tests
 COPY examples ./examples
 USER 10001:10001
