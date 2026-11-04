@@ -172,17 +172,19 @@ def validate_structured(filename: str, data: dict[str, Any]) -> list[str]:
         packages = _entries(data, "packages", "Composer lockfile") + _entries(
             data, "packages-dev", "Composer lockfile"
         )
+        if len(packages) > 10000:
+            raise InventoryError("Inventory exceeds 10,000 components")
         for package in packages:
             if not isinstance(package.get("name"), str) or not isinstance(
                 package.get("version"), str
             ):
                 raise InventoryError("Composer package requires name and version")
+            origins = [package.get("dist"), package.get("source")]
+            if any(origin is not None and not isinstance(origin, dict) for origin in origins):
+                raise InventoryError("Composer package dist and source must be objects")
             if package["version"].startswith("dev-"):
                 notes.append("Composer branch versions (dev-*) have partial coverage")
-            if "path" in {
-                str((package.get("dist") or {}).get("type")),
-                str((package.get("source") or {}).get("type")),
-            }:
+            if "path" in {str((origin or {}).get("type")) for origin in origins}:
                 notes.append(LOCAL_NOTE)
     elif filename == "Pipfile.lock":
         groups = [data.get("default", {}), data.get("develop", {})]
