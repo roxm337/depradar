@@ -83,6 +83,20 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("Strict-Transport-Security", caddyfile)
         self.assertNotIn("email", caddyfile.split("}")[0])
 
+    def test_internal_tls_can_share_the_host_with_another_site(self) -> None:
+        current = state(mode="tls-internal", domain="72.60.39.60", email="", port=8443)
+        self.assertIn("72.60.39.60:8443 {", ctl.render_caddyfile(current))
+        # Clients send no SNI to an IP address, so Caddy must know which certificate to use.
+        self.assertIn("default_sni 72.60.39.60", ctl.render_caddyfile(current))
+        ports = ctl.render_ports(current)
+        self.assertIn('"8443:8443"', ports)
+        self.assertNotIn('"443:443"', ports)
+        self.assertNotIn('"80:80"', ports)
+        self.assertEqual(ctl.public_url(current), "https://72.60.39.60:8443")
+        default = state(mode="tls-internal", domain="72.60.39.60", email="")
+        self.assertEqual(ctl.public_url(default), "https://72.60.39.60")
+        self.assertIn('"443:443"', ctl.render_ports(default))
+
     def test_proxy_mode_listens_on_loopback_only(self) -> None:
         current = {"mode": "proxy", "public_url": "https://deps.example.com/", "port": 8080}
         caddyfile = ctl.render_caddyfile(current)

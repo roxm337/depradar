@@ -38,7 +38,7 @@ same command again: it resumes with the saved settings.
 | Mode | Use it when | Listens on |
 | --- | --- | --- |
 | `https` (default) | The server is on the internet with a domain. Certificates come from Let's Encrypt and renew automatically. | 80, 443 |
-| `tls-internal` | A LAN or staging server. HTTPS with Caddy's private certificate authority; browsers warn until you trust its root. | 80, 443 |
+| `tls-internal` | A LAN or staging server, or an IP address without a domain. HTTPS with Caddy's private certificate authority; browsers warn until you trust its root. Use `--port 8443` (any port) to run beside another site that owns 80 and 443. | 80, 443, or `--port` |
 | `proxy` | Another web server (Nginx, Traefik, a load balancer) already terminates TLS. Point it at the local port. | `127.0.0.1:<port>` |
 | `http` | A trusted private network only. Passwords and tokens travel unencrypted. | `<bind>:<port>` |
 
@@ -76,6 +76,18 @@ migrations, the API, the worker, the isolated scanner, the web interface, and Ca
 publishes ports. It serves the dashboard, routes `/api/*` and `/health/*` to the API so pipelines
 can use the same address, caps request bodies at 11 MB, and adds security headers (HSTS in `https`
 mode). Every service restarts automatically after a crash or a reboot.
+
+### Pipelines with a private certificate authority
+
+In `tls-internal` mode, give pipelines the root certificate so they can verify the server:
+
+```sh
+sudo docker cp depradar-proxy-1:/data/caddy/pki/authorities/local/root.crt depradar-root.crt
+```
+
+Commit it to the repository (it is public, not a secret) and pass it as the GitHub Action's
+`ca-file` input, or `--ca-file` to the client. It is valid for years; the server certificates it
+signs renew automatically.
 
 ## Operate
 
@@ -140,8 +152,9 @@ sudo depradarctl uninstall --purge    # also the database, certificates, and set
 - **Certificate not issued:** the domain must resolve to this server and ports 80 and 443 must be
   open in the cloud provider's firewall. `depradarctl logs proxy` shows Let's Encrypt's answer.
   Caddy keeps retrying, so nothing needs to be reinstalled once DNS is fixed.
-- **Port 80 or 443 in use:** another web server is running. Stop it, or use `--mode proxy` and
-  point that server at DepRadar's local port.
+- **Port 80 or 443 in use:** another site is running. Stop it, run beside it with
+  `--mode tls-internal --port 8443`, or use `--mode proxy` and point that server at DepRadar's
+  local port. A refused change leaves DepRadar running on its current address.
 - **Build killed or very slow on a small VPS:** the build needs about 2 GiB of memory. Accept the
   installer's swap file offer, or add memory.
 - **Anything else:** run `sudo depradarctl doctor`, then read

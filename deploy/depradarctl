@@ -458,8 +458,16 @@ def render_env(values: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def tls_port(state: dict[str, Any]) -> int:
+    """HTTPS port. Let's Encrypt needs 443; a private CA can serve any port, beside other sites."""
+    return int(state.get("port") or 443) if state["mode"] == "tls-internal" else 443
+
+
 def site_address(state: dict[str, Any]) -> str:
-    return state["domain"] if state["mode"] in {"https", "tls-internal"} else ":80"
+    if state["mode"] not in {"https", "tls-internal"}:
+        return ":80"
+    port = tls_port(state)
+    return state["domain"] if port == 443 else f"{state['domain']}:{port}"
 
 
 def render_caddyfile(state: dict[str, Any]) -> str:
@@ -469,6 +477,10 @@ def render_caddyfile(state: dict[str, Any]) -> str:
         options.append(f"\temail {state['email']}")
     if mode in {"proxy", "http"}:
         options.append("\tauto_https off")
+    if mode == "tls-internal":
+        # Clients send no server name (SNI) when they connect to an IP address; without a
+        # default, Caddy cannot pick a certificate and aborts the handshake.
+        options.append(f"\tdefault_sni {state['domain']}")
     options.append("\tadmin 127.0.0.1:2019")
     # The container health check polls the admin API; keep it out of the logs.
     options.append("\tlog default {\n\t\texclude admin.api\n\t}")
@@ -501,8 +513,11 @@ def render_caddyfile(state: dict[str, Any]) -> str:
 
 def render_ports(state: dict[str, Any]) -> str:
     mode = state["mode"]
-    if mode in {"https", "tls-internal"}:
+    if mode in {"https", "tls-internal"} and tls_port(state) == 443:
         ports = ['"80:80"', '"443:443"', '"443:443/udp"']
+    elif mode == "tls-internal":
+        port = tls_port(state)
+        ports = [f'"{port}:{port}"', f'"{port}:{port}/udp"']
     elif mode == "proxy":
         ports = [f'"127.0.0.1:{state["port"]}:80"']
     else:
@@ -516,7 +531,8 @@ def render_ports(state: dict[str, Any]) -> str:
 def public_url(state: dict[str, Any]) -> str:
     mode = state["mode"]
     if mode in {"https", "tls-internal"}:
-        return f"https://{state['domain']}"
+        port = tls_port(state)
+        return f"https://{state['domain']}" + ("" if port == 443 else f":{port}")
     if mode == "proxy":
         return state["public_url"].rstrip("/")
     port = int(state["port"])
@@ -670,7 +686,7 @@ def probe(state: dict[str, Any], path: str = "/health/ready") -> dict[str, Any]:
             if mode == "tls-internal":
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
-            raw = socket.create_connection(("127.0.0.1", 443), timeout=8)
+            raw = socket.create_connection(("127.0.0.1", tls_port(state)), timeout=8)
             connection = context.wrap_socket(raw, server_hostname=state["domain"])
             certificate = connection.getpeercert()
             if certificate:
@@ -886,11 +902,12 @@ def create_swap(size_gib: int = 2) -> None:
 
 
 def open_firewall(state: dict[str, Any]) -> None:
-    ports = (
-        ["80/tcp", "443/tcp", "443/udp"]
-        if state["mode"] in {"https", "tls-internal"}
-        else ([f"{state['port']}/tcp"] if state["mode"] == "http" else [])
-    )
+    if state["mode"] in {"https", "tls-internal"} and tls_port(state) == 443:
+        ports = ["80/tcp", "443/tcp", "443/udp"]
+    elif state["mode"] == "tls-internal":
+        ports = [f"{tls_port(state)}/tcp", f"{tls_port(state)}/udp"]
+    else:
+        ports = [f"{state['port']}/tcp"] if state["mode"] == "http" else []
     if not ports:
         return
     if shutil.which("ufw"):
@@ -1032,10 +1049,22 @@ def wizard(
             state.pop(key, None)
     if mode in {"https", "tls-internal"}:
         check = validate_domain if mode == "https" else validate_host
-        state["domain"] = args.domain or ui.ask("Domain name", state.get("domain"), validate=check)
+        label = "Domain name" if mode == "https" else "Domain name or IP address"
+        state["domain"] = args.domain or ui.ask(label, state.get("domain"), validate=check)
         error = check(state["domain"])
         if error:
             raise Abort(error)
+        if mode == "tls-internal":
+            # Another site may already own 443; a private CA works on any port.
+            state["port"] = int(
+                args.port
+                or ui.ask("HTTPS port", str(state.get("port", 443)), validate=validate_port)
+            )
+        elif args.port and args.port != 443:
+            raise Abort(
+                "Let's Encrypt needs ports 80 and 443",
+                "Use --mode tls-internal for another port, or --mode proxy behind your web server.",
+            )
         if mode == "https":
             email = (
                 args.email
@@ -1412,16 +1441,20 @@ def cmd_install(args: argparse.Namespace) -> None:
 
 def preflight_ports(state: dict[str, Any]) -> None:
     mode = state["mode"]
-    wanted = [80, 443] if mode in {"https", "tls-internal"} else [int(state["port"])]
+    if mode in {"https", "tls-internal"}:
+        wanted = [80, 443] if tls_port(state) == 443 else [tls_port(state)]
+    else:
+        wanted = [int(state["port"])]
     address = "127.0.0.1" if mode == "proxy" else (state.get("bind") or "0.0.0.0")
     if our_proxy_running():
         return
     busy = [port for port in wanted if not port_free(port, address)]
     if busy:
         raise Abort(
-            f"Port {', '.join(map(str, busy))} is already in use on {address}",
-            "Stop the service using it (`ss -ltnp` shows which), or choose the `proxy` mode to run "
-            "behind your existing web server.",
+            f"Port{'s' if len(busy) > 1 else ''} {', '.join(map(str, busy))} "
+            f"{'are' if len(busy) > 1 else 'is'} already in use on {address}",
+            "Stop the service using it (`ss -ltnp` shows which). To run beside it, use "
+            "`--mode tls-internal --port 8443`, or `--mode proxy` behind that web server.",
         )
     ui.ok(f"Port{'s' if len(wanted) > 1 else ''} {', '.join(map(str, wanted))} free on {address}")
     if mode == "https":
@@ -1456,8 +1489,16 @@ def cmd_configure(args: argparse.Namespace) -> None:
         previous.get("port"),
         previous.get("bind"),
     ):
+        # Free our own ports for the check, and keep serving the current address if it fails.
         compose("stop", "proxy", check=False)
-        preflight_ports(state)
+        try:
+            preflight_ports(state)
+        except Abort:
+            with ui.task(f"Keeping {public_url(previous)} online") as task:
+                compose("start", "proxy", task=task, check=False)
+                wait_healthy(task, timeout=120)
+            ui.info("Nothing was changed.")
+            raise
     apply_configuration(state, secrets_in)
     ui.ok("Configuration written", str(CONFIG_DIR))
     with ui.task("Applying") as task:
@@ -1944,7 +1985,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--email", help="Email for Let's Encrypt expiry notices (https)")
         command.add_argument("--public-url", help="Public origin served by your proxy (proxy mode)")
         command.add_argument("--host", help="Hostname or IP users open (http mode)")
-        command.add_argument("--port", type=int, help="Listening port (proxy, http)")
+        command.add_argument("--port", type=int, help="Listening port (tls-internal, proxy, http)")
         command.add_argument("--bind", help="Address to listen on (http mode, default 0.0.0.0)")
         command.add_argument(
             "--smtp-password-file", metavar="FILE", help="File holding the SMTP password"
