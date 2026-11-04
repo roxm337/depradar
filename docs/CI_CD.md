@@ -10,8 +10,9 @@ and JSON reports. Two modes keep pipelines from disturbing monitored state:
 | `check` | pull/merge requests and merge queues | Results are stored on the scan only. Findings, alerts, and monitored inventories never change. Accepted risk on the monitored manifest still applies. |
 
 The client picks the mode automatically (`--mode auto`): change-request pipelines check,
-everything else monitors. Re-uploading unchanged content rechecks the stored snapshot instead of
-storing another copy.
+everything else monitors. Re-uploading unchanged content for the same revision (a retried job)
+rechecks the stored snapshot instead of storing another copy; a new commit with identical bytes
+is stored as its own snapshot, so gate results always name the revision that was uploaded.
 
 ## 1. Make the API reachable
 

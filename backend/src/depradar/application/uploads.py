@@ -87,7 +87,8 @@ def store_inventory(
         raise Invalid(str(exc)) from exc
     sha256 = hashlib.sha256(content).hexdigest()
     existing = reusable_inventory(db, project.id, target_path, kind, sha256) if reuse else None
-    if existing is not None and existing.filename == filename:
+    # Reuse only the same occurrence: a new commit with identical bytes keeps its own revision.
+    if existing is not None and existing.filename == filename and existing.revision == revision:
         active = db.scalar(
             select(Scan)
             .join(Job, Job.scan_id == Scan.id)

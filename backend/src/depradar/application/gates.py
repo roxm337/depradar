@@ -63,6 +63,11 @@ def evaluate_scan(db: Session, scan: Scan, policy: GatePolicy, now: datetime) ->
 
 
 def monitor_candidates(db: Session, scan: Scan) -> list[Candidate]:
+    """What this scan detected, with live owner decisions and threat intelligence.
+
+    Severity, advisories, and fixes come from the scan's own snapshot, so a later rescan cannot
+    rewrite an earlier gate. Scans recorded before snapshots existed fall back to the finding.
+    """
     opened = set(
         db.scalars(
             select(ChangeEvent.finding_id).where(
@@ -70,7 +75,29 @@ def monitor_candidates(db: Session, scan: Scan) -> list[Candidate]:
             )
         )
     )
-    findings = db.scalars(
+    if scan.results is not None:
+        identifiers = [str(result["finding_id"]) for result in scan.results]
+        findings = {
+            finding.id: finding
+            for finding in db.scalars(select(Finding).where(Finding.id.in_(identifiers)))
+        }
+        candidates = []
+        for result in sorted(
+            scan.results, key=lambda item: (item["package_name"], item["finding_id"])
+        ):
+            finding = findings.get(str(result["finding_id"]))
+            detected = {key: value for key, value in result.items() if key != "finding_id"}
+            candidates.append(
+                Candidate(
+                    finding=finding,
+                    detected=detected,
+                    kev_known=finding.kev_known if finding else False,
+                    epss_score=finding.epss_score if finding else None,
+                    new=result["finding_id"] in opened,
+                )
+            )
+        return candidates
+    observed = db.scalars(
         select(Finding)
         .join(Observation, Observation.finding_id == Finding.id)
         .where(Observation.scan_id == scan.id)
@@ -94,7 +121,7 @@ def monitor_candidates(db: Session, scan: Scan) -> list[Candidate]:
             epss_score=finding.epss_score,
             new=finding.id in opened,
         )
-        for finding in findings
+        for finding in observed
     ]
 
 

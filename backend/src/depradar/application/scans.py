@@ -3,6 +3,7 @@
 import hashlib
 import logging
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -198,13 +199,28 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
         )
     )
     seen: set[str] = set()
-    for detected in normalize(response.report):
+    detections = normalize(response.report)
+    # The gate re-evaluates old scans with what each scan saw, not later finding updates.
+    snapshot: list[dict[str, Any]] = []
+    for index, detected in enumerate(detections):
         ids = set(detected.advisory_ids)
+        identity = (detected.ecosystem, detected.package_name, detected.package_version)
+        # Advisory IDs that this report places in a separate group for the same package. When
+        # advisories that were once merged are now reported apart, each group keeps its own
+        # finding and the earlier merged finding gives up the IDs that now belong elsewhere.
+        siblings = {
+            advisory
+            for other, group in enumerate(detections)
+            if other != index
+            and (group.ecosystem, group.package_name, group.package_version) == identity
+            for advisory in group.advisory_ids
+        }
         matches = [
             f
             for f in existing
             if (
-                f.ecosystem == detected.ecosystem
+                f.id not in seen
+                and f.ecosystem == detected.ecosystem
                 and f.package_name == detected.package_name
                 and f.package_version == detected.package_version
                 and ids.intersection(f.advisory_ids)
@@ -245,7 +261,7 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
             finding.workflow_status = "open"
             finding.risk_until = None
             finding.acknowledged_at = None
-        finding.advisory_ids = sorted(ids)
+        finding.advisory_ids = sorted(ids - siblings)
         finding.summary = detected.summary
         finding.severity = detected.severity
         finding.purl = detected.purl
@@ -259,8 +275,10 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
         finding.resolved_at = None
         seen.add(finding.id)
         db.add(Observation(scan_id=scan.id, finding_id=finding.id, evidence=detected.evidence))
+        snapshot.append({"finding_id": finding.id, **detected.model_dump(exclude={"evidence"})})
         if kind:
             record_change(db, finding, scan, kind)
+    scan.results = snapshot
     if scan.complete:
         for finding in existing:
             if finding.id not in seen and finding.status == "open":
