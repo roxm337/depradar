@@ -24,7 +24,7 @@ From `backend/`, use `uv sync`, `uv run ruff check .`, and `uv run mypy src`. Fr
 
 ## Coding Style and Naming
 
-Use four-space indentation, type hints, and `snake_case` for Python functions/modules. Use TypeScript, PascalCase React components, and camelCase functions in the frontend. Use Ruff for Python formatting and ESLint for frontend linting. Keep HTTP request/response schemas in `interfaces/http/schemas.py`. Put business rules in `domain/` and use cases in `application/`; anything that reaches the network, filesystem, or another process goes behind a port in `application/ports.py` with its adapter in `infrastructure/`. Dependencies point inward, and SQLAlchemy is the only framework allowed in `domain/` and `application/`; `tests/test_architecture.py` enforces this.
+Use four-space indentation, type hints, and `snake_case` for Python functions/modules. Use TypeScript, PascalCase React components, and camelCase functions in the frontend. Use Ruff for Python formatting and ESLint for frontend linting. Keep HTTP request/response schemas in `interfaces/http/schemas.py`. Put business rules in `domain/` and use cases in `application/`; anything that reaches the network, filesystem, or another process goes behind a port in `application/ports.py` with its adapter in `infrastructure/`. Dependencies point inward. The core (`domain/` and `application/`) may use only two libraries, and neither may perform I/O: SQLAlchemy, to map entities and query through them, and Pydantic, to validate untrusted data shapes such as scanner reports and gate policies. Web frameworks, HTTP clients, and every other library stay in `interfaces/` and `infrastructure/`; `tests/test_architecture.py` enforces this.
 
 Implement UI directly in code. Never use Superdesign.
 

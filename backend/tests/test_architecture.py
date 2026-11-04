@@ -1,7 +1,8 @@
 """The dependency rule: interfaces → application → domain, and infrastructure implements ports.
 
-SQLAlchemy is the one framework allowed in the core: entities are mapped with it and use cases
-query through it. Everything else that talks to the outside world stays in infrastructure.
+The core may use two libraries, neither for I/O: SQLAlchemy maps entities and runs queries, and
+Pydantic validates untrusted data shapes such as scanner reports and gate policies. Web frameworks,
+HTTP clients, and everything else that talks to the outside world stay outside the core.
 """
 
 import ast

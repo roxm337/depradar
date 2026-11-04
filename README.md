@@ -255,9 +255,10 @@ compose.yaml               Local API/database/worker/scanner deployment
 The backend follows Clean Architecture. Dependencies point inward: interfaces call application
 use cases, and use cases apply domain rules. Anything that reaches the network, the filesystem, or
 another process sits behind a port in `application/ports.py`, which infrastructure implements and
-the entry points wire in. SQLAlchemy is the one framework allowed in the core: entities are mapped
-with it and use cases query through it. `tests/test_architecture.py` fails on any import that
-breaks these rules.
+the entry points wire in. The core may use only SQLAlchemy (entities are mapped with it and use
+cases query through it) and Pydantic (it validates untrusted shapes such as scanner reports), and
+neither performs I/O there. `tests/test_architecture.py` fails on any import that breaks these
+rules.
 
 See [PLAN.md](PLAN.md) for the current single-user scope and [RESEARCH.md](RESEARCH.md) for
 the original market research.

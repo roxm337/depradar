@@ -1,6 +1,6 @@
 # DepRadar — agency edition
 
-Status: single-owner workflow implemented; CI/CD integration (phase A below) implemented and verified. Team accounts await a design decision. Updated: 29 October 2026.
+Status: single-owner workflow implemented; CI/CD integration (phase A below) implemented and verified; deep-audit fixes and manifest retirement verified on the full PostgreSQL/OSV stack. Team accounts await a design decision. Updated: 4 November 2026.
 Basis: [market and GitHub research](RESEARCH.md).
 This plan supersedes the earlier multi-tenant enterprise proposal. The single-user sections below remain the foundation and their rules still apply.
 
@@ -11,6 +11,7 @@ Goal: an internal, ready-to-use dependency security service for an agency that m
 | Phase | Scope | Status |
 | --- | --- | --- |
 | A — CI/CD integration | Scoped, expiring, hash-stored API tokens (optionally per project); `/api/ci/uploads` with project auto-creation and unchanged-content reuse; `monitor` vs `check` modes so pull requests never alter monitored state; gate policy (severity, KEV, EPSS, unknown severity, new-only, acknowledged, incomplete coverage) honoring accepted risk; SARIF 2.1.0, JUnit, Markdown, and JSON reports; standard-library client (Python 3.9+) served by the server; GitHub Action; GitLab template; dashboard token management; 14 manifest formats plus CycloneDX 1.7, each verified with the pinned scanner; full KEV catalog caching; repository CI on current action majors. Also fixed: retention could prune the only snapshot of a clean monorepo manifest. | Done; 112 tests passed on the PostgreSQL/OSV stack |
+| A.1 — Audit hardening | Deep audit of 4 November 2026: newest-snapshot rescans; "clear" shown only for verified complete monitor coverage; digests survive project deletion, follow project alert settings and quiet hours at send time; gates keep each scan's own detections and revision; advisory alias splits; Composer validation; worker liveness during long scans; CI client exit codes and wait budget; GitLab client download over HTTPS only; proxy body cap and no bootstrap injection; container installs from `uv.lock`; owner-retired manifests (migration 0005). | Done; 177 tests passed with no skips on the PostgreSQL/OSV stack |
 | B — Team accounts | Named user accounts with roles (admin, member, viewer); per-user sessions and password reset; actor on decisions, tokens, and audit history; migration of the owner to the first admin; optional OIDC sign-in (for example Google Workspace). Requires a deliberate schema migration of `owner`, `owner_session`, and decision records. | Needs decision |
 | C — Client portfolio | Client grouping and tags on projects; per-client alert routing; Slack/Teams/Discord and signed generic webhook connectors; centrally managed per-project gate defaults; exportable client reports. | Planned |
 | D — Delivery and operations | Web interface container and HTTPS reverse-proxy recipe in Compose; published images with SBOM and provenance; release workflow; repository update automation; CVSS v3 scoring for CVSS-only advisories; VEX export. | Planned |
@@ -138,16 +139,18 @@ durable notifications/retries/digests, scheduled vulnerability rechecks, acknowl
 risk acceptance, transactional project deletion, retention, and versioned backup/restore with a
 PostgreSQL restore drill. The follow-up implementation adds inventory path/revision identity, EPSS/
 KEV enrichment, CVSS/PURL presentation, quiet hours, per-project alert controls, persisted delivery
-attempts, and worker/scanner health. Phase A added migration 0004 (API tokens, check-mode inventories and scans). Migration head: 0004. GitHub sync remains deferred.
+attempts, and worker/scanner health. Phase A added migration 0004 (API tokens, check-mode inventories and scans), and manifest retirement added 0005 (`inventory.retired_at`). Migration head: 0005. GitHub sync remains deferred.
 
-The owner ran compose.verify.yaml on macOS arm64 on 23 October 2026 before migration 0003 and supplied the successful
-log: 46 tests passed with no skips, exit code 0, in 7.76 seconds. This verifies PostgreSQL, the real
-OSV scanner, captured SMTP, Telegram protocol handling, scheduled checks, decisions, fix resolution,
-project deletion, migration round-tripping, and PostgreSQL backup restore drills. Project-local Ruff,
-mypy, formatting, and Compose configuration checks also passed. Five deprecation warnings remain.
+Latest verification, 4 November 2026 on macOS arm64: `compose.verify.yaml` ran 177 tests with no
+skips, exit code 0. It covers PostgreSQL, the real pinned OSV scanner for every accepted manifest
+format (each fixture must surface a recorded known advisory), captured SMTP, the Telegram protocol
+fixture, scheduled checks, decisions, fix resolution, project deletion, migration round trips
+including a populated 0003 → head upgrade, and backup restore drills from revisions 0003 and 0004.
+Ruff, formatting, mypy, frontend lint, frontend unit tests (`node --test`), and the frontend
+production build also passed. Earlier runs (23 October: 46 tests; phase A: 112 tests) predate these
+additions.
 
-The new migration and additions have passed Ruff, mypy, frontend lint, and frontend production build,
-but have not been rerun through the full PostgreSQL/OSV integration stack. External mailbox and real
-Telegram-account delivery need configured destinations; Telegram was previously tested with a local
-protocol fixture. Live scanner coverage exercises npm, not every accepted Poetry/CycloneDX format.
-GitHub sync and capacity benchmarking remain deferred. See README.md and docs/BACKUPS.md.
+Not yet verified: an automated browser flow (dashboard behavior is covered by frontend unit tests of
+its coverage and snapshot logic, not by a browser), delivery to a real mailbox or Telegram account,
+and capacity at 50 projects / 10 MB / 10,000 components. GitHub sync and capacity benchmarking
+remain deferred. See README.md and docs/BACKUPS.md.

@@ -1,4 +1,4 @@
-"""Persistent entities. SQLAlchemy maps them; it is the one framework the core uses."""
+"""Persistent entities, mapped with SQLAlchemy (one of the two libraries the core may use)."""
 
 import uuid
 from datetime import UTC, datetime
