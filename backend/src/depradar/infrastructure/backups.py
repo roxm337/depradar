@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from depradar.application.locking import lock_writes
 from depradar.domain.entities import Base, Inventory, UtcTimestamp, utcnow
 
-REVISION = "0004"
+REVISION = "0005"
 MAX_BACKUP_BYTES = 2 * 1024 * 1024 * 1024
 # Credentials are never archived: a restore must not resurrect a token revoked after the backup.
 CREDENTIAL_TABLES = {"owner_session", "api_token"}
@@ -47,6 +47,7 @@ V2_ADDED_COLUMNS = {
 V2_ADDED_TABLES = {"threat_intel", "delivery_attempt"}
 V3_ADDED_COLUMNS = {"inventory": {"kind"}, "scan": {"mode", "results"}}
 V3_ADDED_TABLES = {"api_token"}
+V4_ADDED_COLUMNS = {"inventory": {"retired_at"}}
 
 
 def encode(value: Any) -> str:
@@ -97,10 +98,16 @@ def upgrade_v3_rows(database: dict[str, Any]) -> None:
         row.update(mode="monitor", results=None)
 
 
+def upgrade_v4_rows(database: dict[str, Any]) -> None:
+    for row in database["inventory"]:
+        row.update(retired_at=None)
+
+
 # (revision, tables added after it, columns added after it, defaults for the added columns)
 UPGRADES = [
     ("0002", V2_ADDED_TABLES, V2_ADDED_COLUMNS, upgrade_v2_rows),
     ("0003", V3_ADDED_TABLES, V3_ADDED_COLUMNS, upgrade_v3_rows),
+    ("0004", set(), V4_ADDED_COLUMNS, upgrade_v4_rows),
 ]
 
 
@@ -299,6 +306,13 @@ def restore_backup(factory: sessionmaker[Session], storage: Path, source: Path) 
                                 lease_token=None,
                                 lease_until=None,
                                 last_error="restore_delivery_state_uncertain",
+                            )
+                        if table.name == "delivery_attempt" and row["status"] == "sending":
+                            # Provider acceptance is unknown, so never claim a failed send.
+                            row.update(
+                                status="uncertain",
+                                completed_at=utcnow(),
+                                error_code="restore_delivery_state_uncertain",
                             )
                     if rows:
                         db.execute(insert(table), rows)

@@ -14,6 +14,7 @@ export function Modals() {
   if (modal.kind === "project") return <ProjectModal onClose={close}/>;
   if (modal.kind === "upload") return <UploadModal onClose={close} initialProject={modal.projectId}/>;
   if (modal.kind === "risk") return <RiskModal onClose={close} findingId={modal.findingId}/>;
+  if (modal.kind === "retire") return <RetireModal onClose={close} projectId={modal.projectId} targetPath={modal.targetPath}/>;
   if (modal.kind === "connector") return modal.channel === "email" ? <EmailModal onClose={close}/> : <TelegramModal onClose={close}/>;
   return <TokenModal onClose={close}/>;
 }
@@ -90,6 +91,37 @@ function UploadModal({ onClose, initialProject }: { onClose: () => void; initial
 
 const riskPresets = [{ value: "7", label: "7 days" }, { value: "30", label: "30 days" }, { value: "90", label: "90 days" }, { value: "custom", label: "Custom" }];
 const daysFromNow = (days: number) => new Date(Date.now() + days * 86_400_000);
+
+function RetireModal({ onClose, projectId, targetPath }: { onClose: () => void; projectId: string; targetPath: string }) {
+  const { projects, findings, actions } = useWorkspace();
+  const project = projects.find((row) => row.id === projectId);
+  const [busy, setBusy] = useState(false);
+  if (!project) return null;
+  const open = findings.filter((finding) => finding.project_id === projectId && finding.target_path === targetPath && finding.status === "open").length;
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project) return;
+    setBusy(true);
+    if (await actions.retireTarget(project, targetPath)) onClose();
+    setBusy(false);
+  }
+  return (
+    <Modal title="Retire this manifest?" description="Use this when a lockfile was renamed or removed from the repository." onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="modal-body">
+          <div className="callout"><Icon name="file" size={16}/><span className="mono">{targetPath}</span></div>
+          <ul className="retire-effects">
+            <li>Scheduled rechecks stop, and it no longer counts toward project coverage.</li>
+            <li>{open ? `Its ${open} open finding${open === 1 ? " is" : "s are"} resolved` : "Any open findings are resolved"} without sending alerts.</li>
+            <li>Scans, findings, and decisions stay in the history.</li>
+            <li>Uploading it again, from the dashboard or CI, resumes monitoring.</li>
+          </ul>
+        </div>
+        <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-danger" disabled={busy}>{busy && <span className="spinner"/>}Retire manifest</button></div>
+      </form>
+    </Modal>
+  );
+}
 
 function RiskModal({ onClose, findingId }: { onClose: () => void; findingId: string }) {
   const { findings, actions } = useWorkspace();

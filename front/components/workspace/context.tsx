@@ -7,7 +7,7 @@ import { supportedInventory } from "@/components/workspace/format";
 
 export type Session = "checking" | "ready" | "offline";
 export type Notice = { kind: "success" | "error" | "info"; text: string } | null;
-export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
+export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
 export type Filters = { status: "open" | "resolved" | "all"; severities: string[]; decision: string; project: string; sort: "priority" | "newest" | "package" };
 export type EmailInput = { host: string; port: number; username: string; sender: string; recipient: string; tls_mode: string };
 export type UploadInput = { projectId: string; file: File; targetPath: string; revision: string };
@@ -30,6 +30,8 @@ async function mapInBatches<T, R>(values: T[], size: number, task: (value: T) =>
   return results;
 }
 
+const BACKGROUND_REFRESH_MS = 60_000;
+
 const message = (failure: unknown, fallback: string) => failure instanceof Error ? failure.message : fallback;
 
 function useWorkspaceState() {
@@ -38,6 +40,7 @@ function useWorkspaceState() {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [dataFailed, setDataFailed] = useState(false);
   const [upgradeHint, setUpgradeHint] = useState(false);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [now, setNow] = useState(0);
@@ -60,15 +63,20 @@ function useWorkspaceState() {
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const liveDataLoaded = useRef(false);
   const pollInFlight = useRef(false);
+  const loadInFlight = useRef(false);
+  const lastLoadedAt = useRef(0);
 
   const load = useCallback(async (silent = true) => {
     if (!silent) setLoading(true);
+    loadInFlight.current = true;
+    let signedIn = false;
     try {
       const status = await api<{ initialized: boolean }>("auth/status");
       if (!status.initialized) { router.replace("/login"); return; }
       // A 401 raises UNAUTHORIZED_EVENT, whose listener sends the browser to the login page.
       const me = await api<{ csrf_token: string }>("auth/me");
       setCsrfToken(me.csrf_token);
+      signedIn = true;
       setSession("ready");
       const projectRows = await loadAllPages<Project>((offset) => api<Project[]>(`projects?limit=100&offset=${offset}`));
       const [findingRows, scanRows, inventoryRows, connectorRows, deliveryRows, policyValue, retentionValue, healthValue, tokenRows] = await Promise.all([
@@ -96,15 +104,19 @@ function useWorkspaceState() {
       setHealth(healthValue);
       setTokens(tokenRows);
       setError("");
+      setDataFailed(false);
       setSyncedAt(new Date().toISOString());
       liveDataLoaded.current = true;
+      lastLoadedAt.current = Date.now();
       setReady(true);
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 401) return;
       setError(message(failure, "Could not load workspace data."));
-      // Without a loaded workspace there is nothing to keep showing, so show the offline screen.
-      setSession((current) => current === "ready" ? current : "offline");
-    } finally { if (!silent) setLoading(false); }
+      // The session turns ready before the data arrives. If the first data load fails there is
+      // nothing to keep showing, so show the retryable unavailable screen instead of skeletons.
+      setDataFailed(signedIn && !liveDataLoaded.current);
+      setSession(liveDataLoaded.current ? "ready" : "offline");
+    } finally { loadInFlight.current = false; if (!silent) setLoading(false); }
   }, [router]);
 
   useEffect(() => { const timer = window.setTimeout(() => void load(false), 0); return () => window.clearTimeout(timer); }, [load]);
@@ -139,6 +151,19 @@ function useWorkspaceState() {
     }, 4000);
     return () => window.clearInterval(timer);
   }, [deliveries, load, scans, session]);
+  useEffect(() => {
+    // CI pipelines and the scheduler change data without this tab knowing, so an idle
+    // dashboard reloads in the background while visible, never overlapping another load.
+    if (session !== "ready") return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || loadInFlight.current) return;
+      if (Date.now() - lastLoadedAt.current < BACKGROUND_REFRESH_MS - 1000) return;
+      void load();
+    };
+    const timer = window.setInterval(refresh, BACKGROUND_REFRESH_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [load, session]);
   useEffect(() => {
     if (session !== "ready") return;
     const timer = window.setInterval(() => { void api<OperationsHealth>("operations/health").then(setHealth).catch(() => undefined); }, 30_000);
@@ -179,6 +204,15 @@ function useWorkspaceState() {
       return run(async () => api(`projects/${target}/inventories?${params}`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: await file.arrayBuffer() }), "Inventory uploaded. The scan is queued.");
     },
     rescan: (inventoryId: string, label: string) => run(() => api(`inventories/${inventoryId}/scans`, json("POST", {})), `A fresh scan was queued for ${label}.`),
+    retireTarget: async (project: Project, targetPath: string) => {
+      try {
+        const result = await api<{ resolved_findings: number }>(`projects/${project.id}/targets/retire`, json("POST", { target_path: targetPath }));
+        const resolved = result.resolved_findings;
+        notify("success", `${targetPath} retired. ${resolved} open finding${resolved === 1 ? "" : "s"} resolved without alerts; history is kept.`);
+        await load();
+        return true;
+      } catch (failure) { notify("error", message(failure, "Could not retire the manifest.")); return false; }
+    },
     rescanAll: (inventoryIds: string[], label: string) => run(() => Promise.all(inventoryIds.map((id) => api(`inventories/${id}/scans`, json("POST", {})))), `${inventoryIds.length} scans queued for ${label}.`),
     setMonitoring: (project: Project, enabled: boolean, hours: number) => run(() => api(`projects/${project.id}/monitoring`, json("PUT", { enabled, interval_hours: hours })), enabled ? `Monitoring ${project.name} every ${hours}h.` : `Monitoring paused for ${project.name}.`),
     setAlerts: (project: Project, enabled: boolean, threshold: string) => run(() => api(`projects/${project.id}/notifications`, json("PUT", { enabled, immediate_min_severity: threshold })), `Alert settings saved for ${project.name}.`),
@@ -219,7 +253,7 @@ function useWorkspaceState() {
   };
 
   return {
-    session, loading, ready, error, upgradeHint, syncedAt, now, origin,
+    session, loading, ready, error, dataFailed, upgradeHint, syncedAt, now, origin,
     projects, findings, scans, inventories, connectors, deliveries, policy, retention, health, tokens,
     notice, setNotice, notify, modal, setModal, findingId, setFindingId, projectId, setProjectId,
     query, setQuery, filters, setFilters, reload: load, actions,

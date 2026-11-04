@@ -18,11 +18,13 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import math
 import os
 import re
 import ssl
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -151,7 +153,10 @@ class Api:
         query: list[tuple[str, str]] | None = None,
         body: bytes | None = None,
     ) -> dict[str, Any]:
-        value = json.loads(self.call(method, path, query, body))
+        try:
+            value = json.loads(self.call(method, path, query, body))
+        except ValueError as error:
+            raise ClientError("DepRadar returned a response that is not JSON") from error
         if not isinstance(value, dict):
             raise ClientError("DepRadar returned an unexpected response")
         return value
@@ -296,27 +301,45 @@ def policy_query(args: argparse.Namespace) -> list[tuple[str, str]]:
     return query
 
 
+def check_timeout(timeout: float) -> None:
+    if not (math.isfinite(timeout) and timeout > 0):
+        raise ClientError("--timeout must be a positive number of seconds")
+
+
 def wait_for(
     api: Api, scan_ids: list[str], timeout: float, sleep: Callable[[float], None], out: IO[str]
 ) -> None:
+    check_timeout(timeout)
     deadline = time.monotonic() + timeout
     pending = list(scan_ids)
     delay = 2.0
-    while True:
-        for scan_id in list(pending):
-            status = api.json("GET", f"/scans/{scan_id}").get("status")
-            if status in FINISHED:
-                pending.remove(scan_id)
-        if not pending:
-            return
-        if time.monotonic() >= deadline:
+    request_limit = api.timeout
+
+    def remaining() -> float:
+        left = deadline - time.monotonic()
+        if left <= 0:
             raise ClientError(
                 f"Timed out after {timeout:g}s waiting for {len(pending)} scan(s); check the "
                 "DepRadar worker and scanner health"
             )
-        print(f"Waiting for {len(pending)} scan(s)...", file=out)
-        sleep(delay)
-        delay = min(delay * 1.5, 15.0)
+        return left
+
+    try:
+        while True:
+            for scan_id in list(pending):
+                # Each request gets only what is left of the budget, so slow responses
+                # across many scans cannot stretch the wait past --timeout.
+                api.timeout = min(request_limit, remaining())
+                status = api.json("GET", f"/scans/{scan_id}").get("status")
+                if status in FINISHED:
+                    pending.remove(scan_id)
+            if not pending:
+                return
+            print(f"Waiting for {len(pending)} scan(s)...", file=out)
+            sleep(min(delay, remaining()))
+            delay = min(delay * 1.5, 15.0)
+    finally:
+        api.timeout = request_limit
 
 
 def write_reports(
@@ -330,10 +353,22 @@ def write_reports(
             continue
         content = api.call("GET", "/ci/evaluation", query + [("format", fmt)])
         if destination:
-            Path(destination).write_bytes(content)
+            write_file(destination, content)
         if fmt == "markdown" and summary:
-            with open(summary, "ab") as stream:
-                stream.write(content)
+            try:
+                with open(summary, "ab") as stream:
+                    stream.write(content)
+            except OSError as error:
+                raise ClientError(
+                    f"Cannot write the job summary: {error.strerror or error}"
+                ) from error
+
+
+def write_file(destination: str, content: bytes) -> None:
+    try:
+        Path(destination).write_bytes(content)
+    except OSError as error:
+        raise ClientError(f"Cannot write {destination}: {error.strerror or error}") from error
 
 
 def report(result: dict[str, Any], env: Mapping[str, str], out: IO[str]) -> None:
@@ -436,6 +471,7 @@ def run(
         else:
             api = Api(base, token, cafile=args.ca_file)
         if args.command == "scan":
+            check_timeout(args.timeout)
             scan_ids = upload_all(api, args, env, out)
             wait_for(api, scan_ids, args.timeout, sleep, out)
         else:
@@ -443,12 +479,20 @@ def run(
         query = [("scan_id", scan_id) for scan_id in scan_ids] + policy_query(args)
         result = api.json("GET", "/ci/evaluation", query + [("format", "json")])
         if args.json:
-            Path(args.json).write_text(json.dumps(result, indent=2) + "\n")
+            write_file(args.json, (json.dumps(result, indent=2) + "\n").encode())
         write_reports(api, args, scan_ids, env)
-        report(result, env, out)
+        try:
+            report(result, env, out)
+        except (KeyError, TypeError) as error:
+            raise ClientError("DepRadar returned an unexpected evaluation response") from error
         return {"pass": PASS, "fail": FAIL}.get(str(result["status"]), ERROR)
     except ClientError as error:
         print(f"depradar-ci: error: {error}", file=out)
+        return ERROR
+    except Exception:
+        # Exit 1 means a policy violation, so an unexpected failure must never surface as one.
+        traceback.print_exc()
+        print("depradar-ci: error: unexpected client failure (see the traceback above)", file=out)
         return ERROR
 
 
@@ -466,7 +510,12 @@ def upload_all(
     revision = args.revision or context["revision"]
     scan_ids = []
     for path in discover(root, args.paths, args.exclude):
-        content = path.read_bytes()
+        try:
+            content = path.read_bytes()
+        except OSError as error:
+            raise ClientError(
+                f"Cannot read {relative(root, path)}: {error.strerror or error}"
+            ) from error
         if len(content) > MAX_UPLOAD:
             raise ClientError(f"{relative(root, path)} exceeds the 10 MiB upload limit")
         query = [
@@ -479,9 +528,13 @@ def upload_all(
         if revision:
             query.append(("revision", revision))
         upload = api.json("POST", "/ci/uploads", query, content)
-        scan_ids.append(str(upload["scan"]["id"]))
-        state = "unchanged, rechecking" if upload["reused_inventory"] else "uploaded"
-        print(f"{relative(root, path)}: {state} ({mode} scan {upload['scan']['id']})", file=out)
+        try:
+            scan_id, reused = str(upload["scan"]["id"]), bool(upload["reused_inventory"])
+        except (KeyError, TypeError) as error:
+            raise ClientError("DepRadar returned an unexpected upload response") from error
+        scan_ids.append(scan_id)
+        state = "unchanged, rechecking" if reused else "uploaded"
+        print(f"{relative(root, path)}: {state} ({mode} scan {scan_id})", file=out)
     return scan_ids
 
 

@@ -10,6 +10,30 @@ from .conftest import Harness
 from .test_ci_tokens import bearer, create_token
 from .test_uploads import upload
 
+FIXTURES = Path(__file__).parent / "fixtures" / "manifests"
+# One long-published advisory per fixture, observed through the pinned scanner on 2026-11-04.
+KNOWN_ADVISORY = {
+    "Cargo.lock": "CVE-2021-25900",
+    "Gemfile.lock": "CVE-2022-30122",
+    "Pipfile.lock": "CVE-2024-24680",
+    "bun.lock": "CVE-2021-44906",
+    "composer.lock": "CVE-2022-24775",
+    "go.mod": "CVE-2021-38561",
+    "pnpm-lock.yaml": "CVE-2021-44906",
+    "poetry.lock": "CVE-2024-35195",
+    "pubspec.lock": "CVE-2020-35669",
+    "pylock.toml": "CVE-2024-35195",
+    "requirements.txt": "CVE-2024-24680",
+    "sbom-1.7.cdx.json": "CVE-2021-44906",
+    "uv.lock": "CVE-2024-35195",
+    "yarn.lock": "CVE-2021-44906",
+}
+
+
+def test_every_fixture_names_its_known_advisory() -> None:
+    # A new manifest format is accepted only with a fixture and its expected advisory.
+    assert {path.name for path in FIXTURES.iterdir()} == set(KNOWN_ADVISORY)
+
 
 @pytest.mark.skipif(
     not os.getenv("DEPRADAR_LIVE_SCANNER_URL"),
@@ -62,3 +86,26 @@ def test_real_osv_check_scan_gates_pipeline_without_changing_findings(
     ).json()
     assert sarif["runs"][0]["results"], sarif
     assert harness.client.get(f"/api/projects/{project_id}/findings").json() == []
+
+
+@pytest.mark.skipif(
+    not os.getenv("DEPRADAR_LIVE_SCANNER_URL"),
+    reason="Real isolated scanner service is not configured",
+)
+@pytest.mark.parametrize("fixture", sorted(FIXTURES.iterdir()), ids=lambda path: path.name)
+def test_every_manifest_format_detects_its_known_advisory(
+    harness: Harness, project_id: str, fixture: Path
+) -> None:
+    """Each accepted format must reach the pinned scanner and surface a known advisory."""
+    harness.settings.scanner_url = os.environ["DEPRADAR_LIVE_SCANNER_URL"]
+    response = upload(harness, project_id, fixture.read_bytes(), fixture.name)
+    assert response.status_code == 202, response.text
+    assert run_once(
+        harness.factory, harness.settings, harness.store, RemoteScanner(harness.settings)
+    )
+    scan = harness.client.get(f"/api/scans/{response.json()['scan']['id']}").json()
+    assert scan["status"] in {"succeeded", "partial"}, scan
+    assert scan["package_count"] > 0, scan
+    findings = harness.client.get(f"/api/projects/{project_id}/findings").json()
+    advisories = {advisory for finding in findings for advisory in finding["advisory_ids"]}
+    assert KNOWN_ADVISORY[fixture.name] in advisories, sorted(advisories)

@@ -93,6 +93,17 @@ def test_local_sources_mark_partial_coverage(filename: str, content: bytes) -> N
         ("composer.lock", b'{"packages": [{"name": "acme/x"}]}'),
         ("composer.lock", b'{"packages": []}'),
         ("composer.lock", b"\xff\xfe"),
+        ("composer.lock", b'{"packages": [{"name": "acme/x", "version": "1.0.0", "dist": "x"}]}'),
+        ("composer.lock", b'{"packages": [{"name": "acme/x", "version": "1.0.0", "source": [1]}]}'),
+        (
+            "composer.lock",
+            json.dumps(
+                {
+                    "packages": [{"name": f"a/p{i}", "version": "1.0.0"} for i in range(5001)],
+                    "packages-dev": [{"name": f"a/d{i}", "version": "1.0.0"} for i in range(5000)],
+                }
+            ).encode(),
+        ),
         ("Pipfile.lock", b'{"default": []}'),
         ("uv.lock", b"version = 1\n"),
         ("Cargo.lock", b'[[package]]\nversion = "1.0.0"\n'),
@@ -119,3 +130,13 @@ def test_uploads_accept_new_formats_and_keep_requirement_variant_targets(
         inventory = response.json()["inventory"]
         assert inventory["filename"] == canonical_filename(name)
         assert inventory["target_path"] == (target or name)
+
+
+def test_malformed_composer_origins_are_a_client_error(harness: Harness, project_id: str) -> None:
+    response = harness.client.post(
+        f"/api/projects/{project_id}/inventories",
+        params={"filename": "composer.lock"},
+        headers=harness.headers,
+        content=b'{"packages": [{"name": "acme/x", "version": "1.0.0", "dist": "not-an-object"}]}',
+    )
+    assert response.status_code == 422

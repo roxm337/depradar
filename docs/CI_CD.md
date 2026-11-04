@@ -10,8 +10,9 @@ and JSON reports. Two modes keep pipelines from disturbing monitored state:
 | `check` | pull/merge requests and merge queues | Results are stored on the scan only. Findings, alerts, and monitored inventories never change. Accepted risk on the monitored manifest still applies. |
 
 The client picks the mode automatically (`--mode auto`): change-request pipelines check,
-everything else monitors. Re-uploading unchanged content rechecks the stored snapshot instead of
-storing another copy.
+everything else monitors. Re-uploading unchanged content for the same revision (a retried job)
+rechecks the stored snapshot instead of storing another copy; a new commit with identical bytes
+is stored as its own snapshot, so gate results always name the revision that was uploaded.
 
 ## 1. Make the API reachable
 
@@ -107,15 +108,18 @@ include:
 
 Add `DEPRADAR_TOKEN` as a masked, protected CI/CD variable. The job runs on merge requests,
 the default branch, and tags; publishes JUnit results to the merge request widget; and keeps the
-Markdown and JSON reports as artifacts. It downloads the client from your DepRadar server; set
-`DEPRADAR_CLIENT_SHA256` to pin it. To publish through the CI/CD Catalog, copy the template into
+Markdown and JSON reports as artifacts. It downloads the client from your DepRadar server over
+HTTPS and refuses redirects; set `DEPRADAR_CLIENT_SHA256` to pin it as well. Plain HTTP is
+accepted only for loopback or when `DEPRADAR_ALLOW_INSECURE_HTTP` is `true` on a trusted private
+network. To publish through the CI/CD Catalog, copy the template into
 a component project's `templates/` directory.
 
 ## 5. Any other CI
 
 ```sh
-curl -fsSL "$DEPRADAR_URL/api/ci/client.py" -o depradar_ci.py   # or /api/backend/ci/client.py
-echo "<expected-sha256>  depradar_ci.py" | sha256sum -c -        # optional pinning
+# HTTPS only, no redirects: the script runs with this job's secrets.
+curl -fsS --proto '=https' "$DEPRADAR_URL/api/ci/client.py" -o depradar_ci.py  # or /api/backend/...
+echo "<expected-sha256>  depradar_ci.py" | sha256sum -c -                      # recommended pin
 python3 -I depradar_ci.py scan --fail-on high --junit depradar.xml --sarif depradar.sarif
 ```
 
@@ -144,10 +148,15 @@ passed explicitly. `--exclude` patterns use shell globbing on repository-relativ
 | `--sarif`, `--junit`, `--markdown`, `--json` | — | Report files |
 | `--no-summary` | off | Skip appending Markdown to `$GITHUB_STEP_SUMMARY` |
 
-`depradar-ci evaluate SCAN_ID ...` re-evaluates finished scans with different policy flags.
+`depradar-ci evaluate SCAN_ID ...` re-evaluates finished scans with different policy flags. Each
+scan keeps the severity, advisories, and fixes it detected, so a later rescan never rewrites an
+earlier result; owner decisions (acknowledgement, accepted risk) and cached KEV/EPSS data are
+applied as they are now.
 
 **Exit codes:** `0` gate passed · `1` policy violation · `2` error (authentication,
-configuration, unreachable server, failed or replaced scan, timeout).
+configuration, unreachable server, malformed server response, unreadable manifest or unwritable
+report file, failed or replaced scan, timeout). `--timeout` bounds the whole wait, including each
+status request.
 
 ## Gate policy
 

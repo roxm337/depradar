@@ -101,8 +101,11 @@ overrides are read and updated at `/api/projects/{id}/notifications` with `enabl
 `immediate_min_severity` (`inherit`, `low`, `medium`, `high`, or `critical`).
 
 Verification produces one initial summary. Events predating verification are not replayed as a flood
-of individual alerts. Unchanged scans do not produce repeated opened events. The worker rechecks
-acknowledgement/risk status before sending queued alerts and digests.
+of individual alerts. Unchanged scans do not produce repeated opened events. When it prepares a
+digest and again just before sending, the worker rechecks acknowledgement/risk status and the
+project's `enabled` alert setting, so disabling a project also drops its queued alerts. Quiet hours
+apply to digests at send time as well, including retries. Deleting a project removes its alerts
+from unsent digests, which still deliver the other projects' alerts; sent digests are not replayed.
 
 ## Scheduled vulnerability monitoring
 
@@ -117,6 +120,19 @@ include `target_path` and `revision` query parameters; separate monorepo manifes
 independently. Scan history shows completion and errors. Rechecking vulnerability intelligence does
 **not** refresh the dependency list: upload a new inventory when project packages change. GitHub
 sync is intentionally deferred.
+
+### Retiring a manifest
+
+When a manifest is renamed or removed from a repository, its old path keeps being rechecked until
+the owner retires it: `POST /api/projects/{id}/targets/retire`, body
+`{"target_path":"web/package-lock.json"}` (owner session only; API tokens cannot retire). Every
+snapshot of that path gets `retired_at`, scheduled and manual rechecks stop (a manual rescan returns
+409), it no longer counts toward coverage, and its open findings resolve with a `retired` change
+event that sends no alert. Scans already queued for the path are superseded. History is kept and
+ages out under normal retention. Uploading the path again, from the dashboard or CI, creates a new
+snapshot and resumes monitoring. Uploads, including CI pipelines that no longer find a manifest,
+never retire anything on their own. Responds with `target_path`, `retired_inventories`, and
+`resolved_findings`; 404 when no active monitored manifest exists at that path.
 
 ## Service and vulnerability intelligence
 

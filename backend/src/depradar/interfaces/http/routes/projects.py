@@ -28,6 +28,8 @@ from depradar.interfaces.http.schemas import (
     ProjectNotificationInput,
     ProjectNotificationOutput,
     ProjectOutput,
+    RetireTargetInput,
+    RetireTargetOutput,
     ScanOutput,
     UploadOutput,
 )
@@ -125,8 +127,8 @@ def findings(
 
 
 @owner.delete("/projects/{project_id}", status_code=204)
-def remove_project(project_id: UUID, db: Db) -> None:
-    projects.delete_project(db, str(project_id))
+def remove_project(project_id: UUID, db: Db, settings: Config) -> None:
+    projects.delete_project(db, str(project_id), settings.dashboard_url)
 
 
 @owner.put("/projects/{project_id}/monitoring")
@@ -157,3 +159,8 @@ def set_project_notifications(
 ) -> dict[str, Any]:
     project = projects.set_alerts(db, str(project_id), body.enabled, body.immediate_min_severity)
     return alert_settings(project)
+
+
+@owner.post("/projects/{project_id}/targets/retire", response_model=RetireTargetOutput)
+def retire_target(project_id: UUID, body: RetireTargetInput, db: Db) -> dict[str, Any]:
+    return projects.retire_target(db, str(project_id), body.target_path)

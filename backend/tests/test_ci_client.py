@@ -2,6 +2,7 @@ import ast
 import hashlib
 import io
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -193,9 +194,14 @@ def test_configuration_and_timeout_errors_exit_2(
     for case_env, argv, message in cases:
         code, output = invoke(harness, case_env, argv, report)
         assert code == 2 and message in output, output
+    for timeout, message in (("0", "positive number"), ("nan", "positive number")):
+        code, output = invoke(
+            harness, env, ["scan", "--root", str(root), "--timeout", timeout], report
+        )
+        assert code == 2 and message in output, output
     out = io.StringIO()
     stalled = run(
-        ["scan", "--root", str(root), "--project", "Example", "--timeout", "0"],
+        ["scan", "--root", str(root), "--project", "Example", "--timeout", "0.05"],
         env=env,
         api_factory=lambda base, secret, args: AppApi(secret, lambda: None),
         sleep=lambda seconds: None,
@@ -297,3 +303,115 @@ def test_client_matches_server_formats_and_runs_on_python_39(harness: Harness) -
     response = harness.client.get("/api/ci/client.py")
     assert response.status_code == 200 and response.content == source
     assert response.headers["x-content-sha256"] == hashlib.sha256(source).hexdigest()
+
+
+class ScriptedApi(Api):
+    """Answer each request from a script, so malformed server responses can be replayed."""
+
+    def __init__(self, responses: dict[str, tuple[int, bytes]]) -> None:
+        super().__init__("https://depradar.example/api", "secret-token-value")
+        self.responses = responses
+
+    def send(
+        self,
+        method: str,
+        path: str,
+        query: list[tuple[str, str]] | None = None,
+        body: bytes | None = None,
+    ) -> tuple[int, bytes]:
+        return self.responses[path.split("/")[1]]
+
+
+def scripted(argv: list[str], responses: dict[str, tuple[int, bytes]]) -> tuple[int, str]:
+    out = io.StringIO()
+    code = run(
+        argv,
+        env={"DEPRADAR_TOKEN": "secret-token-value", "DEPRADAR_URL": "https://depradar.example"},
+        api_factory=lambda base, token, args: ScriptedApi(responses),
+        sleep=lambda seconds: None,
+        out=out,
+    )
+    return code, out.getvalue()
+
+
+SCAN = "00000000-0000-4000-8000-000000000000"
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [
+        {"ci": (200, b"<html>proxy error page</html>")},
+        {"ci": (200, b'{"status": "pass"}')},
+        {
+            "ci": (
+                200,
+                b'{"status": "pass", "violations": 0, "ignored": 0, '
+                b'"below_threshold": 0, "scans": [{"mode": "check"}]}',
+            )
+        },
+    ],
+)
+def test_malformed_server_responses_are_errors_not_violations(
+    responses: dict[str, tuple[int, bytes]],
+) -> None:
+    code, output = scripted(["evaluate", SCAN], responses)
+    assert code == 2 and "depradar-ci: error:" in output
+    assert "secret-token-value" not in output
+
+
+def test_malformed_upload_response_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "package-lock.json").write_bytes(LOCK_BYTES)
+    code, output = scripted(
+        ["scan", "--root", str(tmp_path), "--project", "Example"],
+        {"ci": (202, b'{"scan": null}')},
+    )
+    assert code == 2 and "unexpected upload response" in output
+
+
+def test_unwritable_report_destination_is_an_error(tmp_path: Path) -> None:
+    passing = json.dumps(
+        {"status": "pass", "violations": 0, "ignored": 0, "below_threshold": 0, "scans": []}
+    ).encode()
+    destination = tmp_path / "missing-directory" / "gate.json"
+    code, output = scripted(["evaluate", SCAN, "--json", str(destination)], {"ci": (200, passing)})
+    assert code == 2 and "Cannot write" in output
+
+
+def test_unreadable_manifest_is_an_error(tmp_path: Path) -> None:
+    manifest = tmp_path / "package-lock.json"
+    manifest.write_bytes(LOCK_BYTES)
+    manifest.chmod(0)
+    try:
+        if os.access(manifest, os.R_OK):
+            pytest.skip("running with privileges that ignore file permissions")
+        code, output = scripted(
+            ["scan", "--root", str(tmp_path), "--project", "Example"], {"ci": (202, b"{}")}
+        )
+    finally:
+        manifest.chmod(0o600)
+    assert code == 2 and "Cannot read package-lock.json" in output
+
+
+def test_wait_budget_bounds_every_request_and_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr(ci_client.time, "monotonic", lambda: clock[0])
+    timeouts: list[float] = []
+
+    class SlowApi(ScriptedApi):
+        def send(self, *args: Any, **kwargs: Any) -> tuple[int, bytes]:
+            timeouts.append(self.timeout)
+            clock[0] += self.timeout  # every poll is as slow as the request timeout allows
+            return 200, b'{"status": "running"}'
+
+    api = SlowApi({})
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock[0] += seconds
+
+    with pytest.raises(ClientError, match="Timed out after 90s"):
+        ci_client.wait_for(api, ["a", "b", "c"], 90, sleep, io.StringIO())
+    assert clock[0] <= 90
+    assert timeouts[:2] == [60, 30] and all(value > 0 for value in timeouts)
+    assert api.timeout == 60

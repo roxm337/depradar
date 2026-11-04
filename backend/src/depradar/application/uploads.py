@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from depradar.application.errors import Forbidden, Invalid, NotFound
+from depradar.application.errors import Conflict, Forbidden, Invalid, NotFound
 from depradar.application.locking import lock_writes
 from depradar.application.ports import InventoryStore
 from depradar.application.projects import get_project
@@ -65,7 +65,10 @@ def reusable_inventory(
     if kind == "check":
         query = query.where(Inventory.sha256 == sha256)
     latest = db.scalar(query.order_by(Inventory.created_at.desc(), Inventory.id.desc()).limit(1))
-    return latest if latest is not None and latest.sha256 == sha256 else None
+    # A retired manifest that is uploaded again gets a fresh snapshot, which resumes monitoring.
+    if latest is None or latest.sha256 != sha256 or latest.retired_at is not None:
+        return None
+    return latest
 
 
 def store_inventory(
@@ -87,7 +90,8 @@ def store_inventory(
         raise Invalid(str(exc)) from exc
     sha256 = hashlib.sha256(content).hexdigest()
     existing = reusable_inventory(db, project.id, target_path, kind, sha256) if reuse else None
-    if existing is not None and existing.filename == filename:
+    # Reuse only the same occurrence: a new commit with identical bytes keeps its own revision.
+    if existing is not None and existing.filename == filename and existing.revision == revision:
         active = db.scalar(
             select(Scan)
             .join(Job, Job.scan_id == Scan.id)
@@ -145,6 +149,8 @@ def recheck(db: Session, principal: Principal, inventory_id: str) -> Scan:
     inventory = db.get(Inventory, inventory_id)
     if inventory is None or not principal.allows(inventory.project_id):
         raise NotFound("Inventory not found")
+    if inventory.retired_at is not None:
+        raise Conflict("This manifest is retired; upload it again to resume monitoring")
     scan = queue_scan(db, inventory)
     db.commit()
     return scan
