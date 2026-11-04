@@ -15,7 +15,8 @@ class Vulnerability(BaseModel):
 
 class PackageIdentity(BaseModel):
     name: str = Field(min_length=1)
-    version: str = Field(min_length=1)
+    # Empty when the lockfile left the package unpinned; such a package cannot be matched.
+    version: str = ""
     ecosystem: str = Field(min_length=1)
     purl: str | None = None
 
@@ -60,6 +61,8 @@ def normalize(report: ScannerReport) -> list[DetectedFinding]:
     for source in report.results:
         for result in source.packages:
             p = result.package
+            if not p.version:
+                continue  # an unpinned package has no version to match advisories against
             packages.setdefault((p.ecosystem, p.name, p.version), []).extend(
                 v for v in result.vulnerabilities if not v.withdrawn
             )
