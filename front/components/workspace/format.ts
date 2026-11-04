@@ -73,13 +73,26 @@ export function latestScan(scans: Scan[], projectId: string) {
 const newestFirst = (a: { created_at: string; id: string }, b: { created_at: string; id: string }) =>
   Date.parse(b.created_at) - Date.parse(a.created_at) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-/** The current monitored snapshot of each manifest path, newest first. */
-export function latestPerTarget(inventories: Inventory[], projectId: string) {
+/** The newest snapshot of each manifest path, retired or not, newest first. */
+function newestPerTarget(inventories: Inventory[], projectId: string) {
   const current = new Map<string, Inventory>();
   for (const row of inventories.filter((inventory) => inventory.project_id === projectId).sort(newestFirst)) {
     if (!current.has(row.target_path)) current.set(row.target_path, row);
   }
   return [...current.values()];
+}
+
+/**
+ * The current monitored snapshot of each manifest path, newest first. A path whose newest
+ * snapshot is retired is no longer monitored; uploading it again makes a newer, active snapshot.
+ */
+export function latestPerTarget(inventories: Inventory[], projectId: string) {
+  return newestPerTarget(inventories, projectId).filter((row) => !row.retired_at);
+}
+
+/** Manifests the owner retired, as their newest (retired) snapshot. */
+export function retiredTargets(inventories: Inventory[], projectId: string) {
+  return newestPerTarget(inventories, projectId).filter((row) => row.retired_at);
 }
 
 export type CoverageState = "none" | "unknown" | "unscanned" | "pending" | "incomplete" | "verified";
@@ -93,7 +106,9 @@ export function projectCoverage(projectId: string, inventories: Inventory[], sca
   const manifests = latestPerTarget(inventories, projectId);
   const monitorScans = scans.filter((scan) => scan.project_id === projectId && scan.mode !== "check" && scan.status !== "superseded").sort(newestFirst);
   const latest = monitorScans[0];
-  if (!manifests.length) return { state: monitorScans.length ? "unknown" : "none", manifests, verified: 0, latest };
+  // Scans without any snapshot mean the inventory list is unavailable; retired-only means none.
+  const retired = retiredTargets(inventories, projectId).length > 0;
+  if (!manifests.length) return { state: monitorScans.length && !retired ? "unknown" : "none", manifests, verified: 0, latest };
   const states = manifests.map((manifest) => {
     const scan = monitorScans.find((row) => row.inventory_id === manifest.id);
     if (!scan) return "unscanned";

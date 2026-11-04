@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { byPriority, cadence, countBySeverity, dateTime, monogram, primaryAdvisory, projectCoverage, relativeTime, scanLabel, scanTone, shortDate, type CoverageState } from "@/components/workspace/format";
+import { byPriority, cadence, countBySeverity, dateTime, monogram, primaryAdvisory, projectCoverage, relativeTime, retiredTargets, scanLabel, scanTone, shortDate, type CoverageState } from "@/components/workspace/format";
 import { CopyButton, Drawer, Empty, Pkg, Sev, StackBar, Switch } from "@/components/workspace/ui";
 import { api, type Finding, type FindingDecision, type Project } from "@/lib/api";
 
@@ -38,6 +38,9 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
   const project = workspace.projects.find((row) => row.id === finding.project_id);
   const links = references(finding.evidence);
   const open = finding.status === "open";
+  // Retiring a manifest resolves its open findings at the moment of retirement.
+  const retired = retiredTargets(workspace.inventories, finding.project_id).find((row) => row.target_path === finding.target_path);
+  const resolvedByRetirement = !open && Boolean(retired?.retired_at && finding.resolved_at && Date.parse(finding.resolved_at) >= Date.parse(retired.retired_at) - 60_000);
 
   useEffect(() => {
     let active = true;
@@ -107,7 +110,7 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
         </section>
       </div>
       <div className="drawer-foot">
-        {!open && <span className="foot-meta">Resolved by a complete scan on {shortDate(finding.resolved_at)}.</span>}
+        {!open && <span className="foot-meta">{resolvedByRetirement ? `Resolved when its manifest was retired on ${shortDate(finding.resolved_at)}.` : `Resolved by a complete scan on ${shortDate(finding.resolved_at)}.`}</span>}
         {open && finding.workflow_status === "open" && <button className="btn btn-primary" onClick={() => void actions.acknowledge(finding)}><Icon name="check" size={16}/>Acknowledge</button>}
         {open && finding.workflow_status !== "open" && <button className="btn btn-secondary" onClick={() => void actions.clearDecision(finding)}>{finding.workflow_status === "risk_accepted" ? "Revoke risk acceptance" : "Reopen for review"}</button>}
         {open && finding.workflow_status !== "risk_accepted" && <button className="btn btn-ghost" onClick={() => workspace.setModal({ kind: "risk", findingId: finding.id })}>Accept risk temporarily…</button>}
@@ -143,6 +146,7 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
   const scans = workspace.scans.filter((scan) => scan.project_id === project.id);
   const coverage = projectCoverage(project.id, workspace.inventories, scans);
   const manifests = coverage.manifests;
+  const retired = retiredTargets(workspace.inventories, project.id).filter((row) => !manifests.some((manifest) => manifest.target_path === row.target_path));
   const latest = scans[0];
 
   return (
@@ -169,8 +173,12 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
         </>}
         {tab === "manifests" && <section className="block">
           <h3 className="block-title">Monitored manifests</h3>
-          {manifests.length ? <div className="list">{manifests.map((manifest) => <div key={manifest.id} className="list-row"><Icon name="file" size={17}/><span className="cell-main"><span className="mono">{manifest.target_path}</span><small>Uploaded {relativeTime(now, manifest.created_at)}{manifest.revision ? ` · ${manifest.revision}` : ""} · sha256 {manifest.sha256.slice(0, 12)}</small></span><button className="btn btn-secondary btn-sm" onClick={() => void actions.rescan(manifest.id, manifest.target_path)}><Icon name="refresh" size={14}/>Scan</button></div>)}</div> : <Empty title="No manifests yet" text="Upload a lockfile or SBOM, or let a CI pipeline upload one on every merge."/>}
+          {manifests.length ? <div className="list">{manifests.map((manifest) => <div key={manifest.id} className="list-row"><Icon name="file" size={17}/><span className="cell-main"><span className="mono">{manifest.target_path}</span><small>Uploaded {relativeTime(now, manifest.created_at)}{manifest.revision ? ` · ${manifest.revision}` : ""} · sha256 {manifest.sha256.slice(0, 12)}</small></span><button className="btn btn-secondary btn-sm" onClick={() => void actions.rescan(manifest.id, manifest.target_path)}><Icon name="refresh" size={14}/>Scan</button><button className="btn btn-ghost btn-sm" onClick={() => workspace.setModal({ kind: "retire", projectId: project.id, targetPath: manifest.target_path })} aria-label={`Retire ${manifest.target_path}`}>Retire</button></div>)}</div> : <Empty title={retired.length ? "No monitored manifests" : "No manifests yet"} text="Upload a lockfile or SBOM, or let a CI pipeline upload one on every merge."/>}
           <button className="btn btn-secondary" onClick={() => workspace.setModal({ kind: "upload", projectId: project.id })}><Icon name="upload" size={15}/>Upload a manifest</button>
+        </section>}
+        {tab === "manifests" && retired.length > 0 && <section className="block retired-list">
+          <h3 className="block-title">Retired manifests</h3>
+          <div className="list">{retired.map((manifest) => <div key={manifest.id} className="list-row"><Icon name="file" size={17}/><span className="cell-main"><span className="mono">{manifest.target_path}</span><small>Retired {shortDate(manifest.retired_at)} · Upload it again to resume monitoring</small></span></div>)}</div>
         </section>}
         {tab === "scans" && <section className="block">
           <h3 className="block-title">Scan history</h3>

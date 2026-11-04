@@ -20,6 +20,8 @@ export type Inventory = {
   size_bytes: number;
   created_at: string;
   kind?: "monitor" | "check";
+  /** Set when the owner retired this manifest; uploading it again resumes monitoring. */
+  retired_at?: string | null;
 };
 
 export type Finding = {

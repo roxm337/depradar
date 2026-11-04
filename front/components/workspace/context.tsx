@@ -7,7 +7,7 @@ import { supportedInventory } from "@/components/workspace/format";
 
 export type Session = "checking" | "ready" | "offline";
 export type Notice = { kind: "success" | "error" | "info"; text: string } | null;
-export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
+export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
 export type Filters = { status: "open" | "resolved" | "all"; severities: string[]; decision: string; project: string; sort: "priority" | "newest" | "package" };
 export type EmailInput = { host: string; port: number; username: string; sender: string; recipient: string; tls_mode: string };
 export type UploadInput = { projectId: string; file: File; targetPath: string; revision: string };
@@ -204,6 +204,15 @@ function useWorkspaceState() {
       return run(async () => api(`projects/${target}/inventories?${params}`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: await file.arrayBuffer() }), "Inventory uploaded. The scan is queued.");
     },
     rescan: (inventoryId: string, label: string) => run(() => api(`inventories/${inventoryId}/scans`, json("POST", {})), `A fresh scan was queued for ${label}.`),
+    retireTarget: async (project: Project, targetPath: string) => {
+      try {
+        const result = await api<{ resolved_findings: number }>(`projects/${project.id}/targets/retire`, json("POST", { target_path: targetPath }));
+        const resolved = result.resolved_findings;
+        notify("success", `${targetPath} retired. ${resolved} open finding${resolved === 1 ? "" : "s"} resolved without alerts; history is kept.`);
+        await load();
+        return true;
+      } catch (failure) { notify("error", message(failure, "Could not retire the manifest.")); return false; }
+    },
     rescanAll: (inventoryIds: string[], label: string) => run(() => Promise.all(inventoryIds.map((id) => api(`inventories/${id}/scans`, json("POST", {})))), `${inventoryIds.length} scans queued for ${label}.`),
     setMonitoring: (project: Project, enabled: boolean, hours: number) => run(() => api(`projects/${project.id}/monitoring`, json("PUT", { enabled, interval_hours: hours })), enabled ? `Monitoring ${project.name} every ${hours}h.` : `Monitoring paused for ${project.name}.`),
     setAlerts: (project: Project, enabled: boolean, threshold: string) => run(() => api(`projects/${project.id}/notifications`, json("PUT", { enabled, immediate_min_severity: threshold })), `Alert settings saved for ${project.name}.`),
