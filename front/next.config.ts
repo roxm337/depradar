@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // A self-contained server for the production container (deploy/depradarctl).
+  output: "standalone",
   experimental: {
     agentFeedback: true,
   },

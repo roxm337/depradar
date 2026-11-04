@@ -1,0 +1,2089 @@
+#!/usr/bin/env python3
+"""depradarctl: install and operate DepRadar on a Linux server.
+
+    sudo ./deploy/depradarctl install        guided installation (HTTPS, owner, backups)
+    sudo depradarctl status                  services, endpoint, certificate, backups
+    sudo depradarctl upgrade                 verified backup, update, health check, rollback
+    sudo depradarctl backup | restore FILE   verified archives in /var/backups/depradar
+    sudo depradarctl doctor                  diagnose a broken or degraded installation
+
+Standard library only (Python 3.9+). Every step is idempotent: re-running a command after a
+failure or interruption continues safely. Secrets live in /etc/depradar/depradar.env (0600)
+and are never passed as command-line arguments or written to the log.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import getpass
+import ipaddress
+import json
+import os
+import platform
+import re
+import secrets
+import shlex
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.parse
+import urllib.request
+from collections import deque
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+TOOL_VERSION = "1.0.0"
+ROOT = Path(__file__).resolve().parent.parent
+CONFIG_DIR = Path(os.environ.get("DEPRADAR_CONFIG_DIR", "/etc/depradar"))
+ENV_FILE = CONFIG_DIR / "depradar.env"
+STATE_FILE = CONFIG_DIR / "install.json"
+CADDYFILE = CONFIG_DIR / "Caddyfile"
+PORTS_FILE = CONFIG_DIR / "compose.ports.yaml"
+BACKUP_DIR = Path(os.environ.get("DEPRADAR_BACKUP_DIR", "/var/backups/depradar"))
+LOG_DIR = Path(os.environ.get("DEPRADAR_LOG_DIR", "/var/log/depradar"))
+BIN_LINK = Path("/usr/local/bin/depradarctl")
+UNIT_DIR = Path("/etc/systemd/system")
+LOCK_FILE = Path("/run/lock/depradarctl.lock")
+PROJECT = "depradar"
+MIN_COMPOSE = (2, 24)
+MIN_DOCKER = (23, 0)
+SERVICES = ("db", "scanner", "api", "worker", "web", "proxy")
+NO_HEALTHCHECK = {"worker"}
+VOLUMES_WITH_DATA = ("postgres-data", "inventories")
+
+MODES = {
+    "https": "Public HTTPS with automatic Let's Encrypt certificates",
+    "tls-internal": "HTTPS with a private certificate authority (LAN, staging)",
+    "proxy": "Behind your own reverse proxy, listening on 127.0.0.1",
+    "http": "Plain HTTP on a trusted private network",
+}
+HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$"
+)
+EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|[\x00-\x08\x0b-\x1f\x7f]")
+
+
+# ─── Terminal interface ──────────────────────────────────────────────────────────────────────
+
+
+class Abort(Exception):
+    """A failure the operator can act on: a message and, ideally, what to do next."""
+
+    def __init__(self, message: str, hint: str = "") -> None:
+        super().__init__(message)
+        self.hint = hint
+
+
+class UI:
+    FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def __init__(self) -> None:
+        self.tty = sys.stdout.isatty()
+        self.color = (
+            self.tty and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+        )
+        self.interactive = sys.stdin.isatty() and self.tty
+        self.assume_yes = False
+        self.quiet = False
+        self.lock = threading.Lock()
+        self.active: Task | None = None
+        self.log: Any = None
+
+    def style(self, code: str, text: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if self.color else text
+
+    def bold(self, text: str) -> str:
+        return self.style("1", text)
+
+    def dim(self, text: str) -> str:
+        return self.style("2", text)
+
+    def accent(self, text: str) -> str:
+        return self.style("36", text)
+
+    def emit(self, line: str = "", *, force: bool = False) -> None:
+        if self.quiet and not force:
+            self.record(line)
+            return
+        with self.lock:
+            if self.active and self.tty:
+                sys.stdout.write("\r\033[2K")
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+        self.record(line)
+
+    def record(self, line: str) -> None:
+        if self.log:
+            self.log.write(ANSI.sub("", line) + "\n")
+            self.log.flush()
+
+    def banner(self, subtitle: str) -> None:
+        self.emit()
+        self.emit(f"  {self.bold('DepRadar')} {self.dim('·')} {subtitle}")
+        self.emit(self.dim("  " + "─" * 58))
+
+    def section(self, title: str) -> None:
+        self.emit()
+        self.emit(f"  {self.accent('◆')} {self.bold(title)}")
+
+    def ok(self, text: str, detail: str = "") -> None:
+        self.emit(
+            f"    {self.style('32', '✓')} {text}" + (f"  {self.dim(detail)}" if detail else "")
+        )
+
+    def warn(self, text: str, hint: str = "") -> None:
+        self.emit(f"    {self.style('33', '!')} {text}", force=True)
+        self.hint(hint)
+
+    def fail(self, text: str, hint: str = "", detail: str = "") -> None:
+        suffix = f"  {self.dim(detail)}" if detail else ""
+        self.emit(f"    {self.style('31', '✗')} {text}{suffix}", force=True)
+        self.hint(hint)
+
+    def hint(self, text: str) -> None:
+        for line in text.splitlines():
+            self.emit(f"      {self.dim(line.strip())}", force=True)
+
+    def info(self, text: str) -> None:
+        self.emit(f"    {self.dim('·')} {text}")
+
+    def task(self, label: str) -> Task:
+        return Task(self, label)
+
+    # Prompts never run while a spinner is active and never echo secrets to the log.
+    def ask(
+        self,
+        label: str,
+        default: str | None = None,
+        *,
+        validate: Callable[[str], str | None] | None = None,
+        secret: bool = False,
+        optional: bool = False,
+    ) -> str:
+        if not self.interactive or self.assume_yes:
+            if default is not None or optional:
+                return default or ""
+            raise Abort(f"{label} is required", "Pass it as a command-line option.")
+        suffix = f" {self.dim(f'[{default}]')}" if default and not secret else ""
+        suffix += f" {self.dim('(optional)')}" if optional and not default else ""
+        while True:
+            prompt = f"    {self.accent('?')} {label}{suffix} {self.dim('›')} "
+            value = getpass.getpass(prompt) if secret else input(prompt)
+            # Secrets are kept exactly as typed; other answers ignore surrounding spaces.
+            value = (value if secret else value.strip()) or (default or "")
+            if not value and optional:
+                return ""
+            error = validate(value) if validate else (None if value else "A value is required")
+            if not error:
+                self.record(f"    ? {label} › {'(hidden)' if secret else value}")
+                return value
+            self.emit(f"      {self.style('31', error)}", force=True)
+
+    def confirm(self, label: str, default: bool = True) -> bool:
+        if not self.interactive or self.assume_yes:
+            return default if not self.assume_yes else True
+        hint = "Y/n" if default else "y/N"
+        while True:
+            answer = input(f"    {self.accent('?')} {label} {self.dim(f'({hint})')} › ")
+            answer = answer.strip().lower()
+            if not answer:
+                return default
+            if answer in {"y", "yes", "n", "no"}:
+                return answer.startswith("y")
+
+    def choose(self, label: str, options: dict[str, str], default: str) -> str:
+        if not self.interactive or self.assume_yes:
+            return default
+        keys = list(options)
+        self.emit(f"    {self.accent('?')} {label}")
+        for index, key in enumerate(keys, 1):
+            marker = self.accent("›") if key == default else " "
+            self.emit(f"      {marker} {index}. {self.bold(key):<24} {self.dim(options[key])}")
+        while True:
+            raw = input(f"      {self.dim(f'Choice [{keys.index(default) + 1}]')} › ").strip()
+            if not raw:
+                return default
+            if raw.isdigit() and 1 <= int(raw) <= len(keys):
+                return keys[int(raw) - 1]
+            if raw in options:
+                return raw
+
+    def typed_confirmation(self, word: str, consequence: str) -> None:
+        self.warn(consequence)
+        if self.assume_yes:
+            return
+        if not self.interactive:
+            raise Abort("Confirmation required", "Re-run interactively, or pass --yes.")
+        if input(f"    {self.accent('?')} Type {self.bold(word)} to continue › ").strip() != word:
+            raise Abort("Not confirmed; nothing was changed")
+
+    def card(self, title: str, rows: list[tuple[str, str]]) -> None:
+        inner = max([len(title) + 5] + [len(value) + 16 for _, value in rows])
+        frame = lambda text: self.style("32", text)  # noqa: E731
+        self.emit()
+        self.emit(
+            "  "
+            + frame("╭─ ")
+            + self.bold(title)
+            + frame(" " + "─" * (inner - len(title) - 3) + "╮")
+        )
+        for key, value in rows:
+            padding = " " * (inner - 14 - len(value))
+            self.emit(
+                "  " + frame("│") + "  " + self.dim(key.ljust(12)) + value + padding + frame("│")
+            )
+        self.emit("  " + frame("╰" + "─" * inner + "╯"))
+
+
+class Task:
+    """A long step: a live spinner with elapsed time and the latest output line."""
+
+    def __init__(self, ui: UI, label: str) -> None:
+        self.ui = ui
+        self.label = label
+        self.last = ""
+        self.started = 0.0
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def note(self, line: str) -> None:
+        cleaned = ANSI.sub("", line).strip()
+        if cleaned:
+            self.last = cleaned
+
+    def elapsed(self) -> str:
+        seconds = int(time.monotonic() - self.started)
+        return f"{seconds // 60}m{seconds % 60:02d}s" if seconds >= 60 else f"{seconds}s"
+
+    def spin(self) -> None:
+        frame = 0
+        while not self.stop.wait(0.1):
+            width = shutil.get_terminal_size((100, 20)).columns
+            head = f"    {self.ui.accent(UI.FRAMES[frame % len(UI.FRAMES)])} {self.label}  {self.ui.dim(self.elapsed())}"
+            room = width - len(ANSI.sub("", head)) - 6
+            tail = f"  {self.ui.dim(self.last[:room])}" if room > 10 and self.last else ""
+            with self.ui.lock:
+                sys.stdout.write("\r\033[2K" + head + tail)
+                sys.stdout.flush()
+            frame += 1
+
+    def __enter__(self) -> Task:
+        self.started = time.monotonic()
+        self.ui.active = self
+        if self.ui.tty and not self.ui.quiet:
+            self.thread = threading.Thread(target=self.spin, daemon=True)
+            self.thread.start()
+        else:
+            self.ui.emit(f"    … {self.label}")
+        return self
+
+    def __exit__(self, kind: Any, error: Any, trace: Any) -> None:
+        self.stop.set()
+        if self.thread:
+            self.thread.join()
+            with self.ui.lock:
+                sys.stdout.write("\r\033[2K")
+                sys.stdout.flush()
+        self.ui.active = None
+        if kind is None:
+            self.ui.ok(self.label, self.elapsed())
+        elif kind is not KeyboardInterrupt:
+            self.ui.fail(self.label, detail=self.elapsed())
+
+
+ui = UI()
+
+
+# ─── Processes ───────────────────────────────────────────────────────────────────────────────
+
+
+class CommandFailed(Abort):
+    def __init__(self, command: list[str], code: int, tail: list[str]) -> None:
+        detail = "\n".join(f"│ {ANSI.sub('', line).strip()[:200]}" for line in tail[-15:])
+        super().__init__(
+            f"`{shlex.join(command[:6])}{' …' if len(command) > 6 else ''}` exited with {code}",
+            (detail + "\n" if detail else "") + f"Full log: {LOG_DIR / 'depradarctl.log'}",
+        )
+        self.code = code
+        self.tail = tail
+
+
+def run(
+    command: list[str],
+    *,
+    task: Task | None = None,
+    check: bool = True,
+    stdin_text: str | None = None,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    """Run a command, streaming output to the log and the active spinner."""
+    ui.record(f"$ {shlex.join(command)}")
+    merged = {**os.environ, "BUILDKIT_PROGRESS": "plain", **(env or {})}
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=merged,
+            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            bufsize=1,
+        )
+    except FileNotFoundError as error:
+        raise Abort(f"{command[0]} is not installed") from error
+    if stdin_text is not None:
+        assert process.stdin is not None
+        process.stdin.write(stdin_text)
+        process.stdin.close()
+    tail: deque[str] = deque(maxlen=200)
+    output: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        line = line.rstrip("\n")
+        if ui.log:
+            ui.log.write(ANSI.sub("", line) + "\n")
+        tail.append(line)
+        if capture:
+            output.append(line)
+        if task:
+            task.note(line)
+    code = process.wait()
+    if ui.log:
+        ui.log.flush()
+    if check and code:
+        raise CommandFailed(command, code, list(tail))
+    return code, "\n".join(output if capture else tail)
+
+
+def attached(command: list[str]) -> int:
+    """Run with the operator's terminal, for prompts and live logs."""
+    ui.record(f"$ {shlex.join(command)} (attached)")
+    return subprocess.call(command, cwd=ROOT)
+
+
+def git(*args: str, check: bool = True) -> str:
+    _, out = run(["git", "-c", f"safe.directory={ROOT}", *args], capture=True, check=check)
+    return out.strip()
+
+
+def compose_command(*args: str) -> list[str]:
+    return [
+        "docker",
+        "compose",
+        "--project-name",
+        PROJECT,
+        "--project-directory",
+        str(ROOT),
+        "--env-file",
+        str(ENV_FILE),
+        "-f",
+        str(ROOT / "compose.yaml"),
+        "-f",
+        str(ROOT / "deploy" / "compose.production.yaml"),
+        "-f",
+        str(PORTS_FILE),
+        *args,
+    ]
+
+
+def compose(*args: str, **kwargs: Any) -> tuple[int, str]:
+    return run(compose_command(*args), **kwargs)
+
+
+# ─── Configuration ───────────────────────────────────────────────────────────────────────────
+
+
+def quote_env(value: str) -> str:
+    """Compose env-file quoting: single quotes are literal; otherwise escape \\ " and $."""
+    if "\n" in value or "\r" in value:
+        raise Abort("Configuration values cannot contain line breaks")
+    if "'" not in value:
+        return f"'{value}'"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return f'"{escaped}"'
+
+
+def unquote_env(raw: str) -> str:
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        return raw[1:-1]
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        return re.sub(r"\\([\\\"$])", r"\1", raw[1:-1])
+    return raw
+
+
+def read_env(path: Path = ENV_FILE) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, _, raw = line.partition("=")
+        values[key.strip()] = unquote_env(raw)
+    return values
+
+
+def write_private(path: Path, content: str, mode: int = 0o600) -> None:
+    """Atomic write that never exposes the content with broader permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(descriptor, "w") as stream:
+        stream.write(content)
+    os.replace(temporary, path)
+    os.chmod(path, mode)
+
+
+def render_env(values: dict[str, str]) -> str:
+    lines = [
+        "# DepRadar installation settings, managed by depradarctl.",
+        "# Contains secrets: keep it private and back it up separately from data archives.",
+        "# Change it with `depradarctl configure`; edits by hand apply after `depradarctl restart`.",
+    ]
+    lines += [f"{key}={quote_env(value)}" for key, value in values.items()]
+    return "\n".join(lines) + "\n"
+
+
+def site_address(state: dict[str, Any]) -> str:
+    return state["domain"] if state["mode"] in {"https", "tls-internal"} else ":80"
+
+
+def render_caddyfile(state: dict[str, Any]) -> str:
+    mode = state["mode"]
+    options = []
+    if mode == "https" and state.get("email"):
+        options.append(f"\temail {state['email']}")
+    if mode in {"proxy", "http"}:
+        options.append("\tauto_https off")
+    options.append("\tadmin 127.0.0.1:2019")
+    # The container health check polls the admin API; keep it out of the logs.
+    options.append("\tlog default {\n\t\texclude admin.api\n\t}")
+    headers = [
+        "\t\tX-Content-Type-Options nosniff",
+        "\t\tX-Frame-Options DENY",
+        "\t\tReferrer-Policy strict-origin-when-cross-origin",
+        '\t\tPermissions-Policy "camera=(), microphone=(), geolocation=()"',
+        "\t\t-Server",
+    ]
+    if mode == "https":
+        headers.insert(0, '\t\tStrict-Transport-Security "max-age=31536000"')
+    tls = "\ttls internal\n" if mode == "tls-internal" else ""
+    return (
+        "# Generated by depradarctl; run `depradarctl configure` instead of editing.\n"
+        "{\n" + "\n".join(options) + "\n}\n\n"
+        f"{site_address(state)} {{\n{tls}"
+        "\tencode zstd gzip\n"
+        "\t# Uploads are capped at 10 MiB by the API; refuse larger bodies at the edge.\n"
+        "\trequest_body {\n\t\tmax_size 11MB\n\t}\n"
+        "\theader {\n" + "\n".join(headers) + "\n\t}\n"
+        "\t# The dashboard's same-origin proxy, then the API for pipelines, then the dashboard.\n"
+        "\thandle /api/backend/* {\n\t\treverse_proxy web:3000\n\t}\n"
+        "\t@api path /api/* /health/*\n"
+        "\thandle @api {\n\t\treverse_proxy api:8000\n\t}\n"
+        "\thandle {\n\t\treverse_proxy web:3000\n\t}\n"
+        "}\n"
+    )
+
+
+def render_ports(state: dict[str, Any]) -> str:
+    mode = state["mode"]
+    if mode in {"https", "tls-internal"}:
+        ports = ['"80:80"', '"443:443"', '"443:443/udp"']
+    elif mode == "proxy":
+        ports = [f'"127.0.0.1:{state["port"]}:80"']
+    else:
+        ports = [f'"{state.get("bind") or "0.0.0.0"}:{state["port"]}:80"']
+    return (
+        "# Generated by depradarctl from the install mode; do not edit.\n"
+        "services:\n  proxy:\n    ports:\n" + "".join(f"      - {port}\n" for port in ports)
+    )
+
+
+def public_url(state: dict[str, Any]) -> str:
+    mode = state["mode"]
+    if mode in {"https", "tls-internal"}:
+        return f"https://{state['domain']}"
+    if mode == "proxy":
+        return state["public_url"].rstrip("/")
+    port = int(state["port"])
+    return f"http://{state['host']}" + ("" if port == 80 else f":{port}")
+
+
+def load_state() -> dict[str, Any]:
+    if not STATE_FILE.exists():
+        raise Abort(
+            "DepRadar is not installed on this machine",
+            f"Run `sudo {ROOT / 'deploy' / 'depradarctl'} install` first.",
+        )
+    return json.loads(STATE_FILE.read_text())
+
+
+def save_state(state: dict[str, Any]) -> None:
+    write_private(STATE_FILE, json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+def apply_configuration(state: dict[str, Any], secrets_in: dict[str, str]) -> None:
+    current = read_env()
+    values = {
+        "POSTGRES_PASSWORD": current.get("POSTGRES_PASSWORD") or secrets.token_hex(24),
+        "DEPRADAR_BOOTSTRAP_TOKEN": current.get("DEPRADAR_BOOTSTRAP_TOKEN")
+        or secrets.token_hex(32),
+        "DEPRADAR_PUBLIC_URL": public_url(state),
+        "DEPRADAR_SECURE_COOKIES": "false" if state["mode"] == "http" else "true",
+        "DEPRADAR_SMTP_PASSWORD": secrets_in.get("smtp", current.get("DEPRADAR_SMTP_PASSWORD", "")),
+        "DEPRADAR_TELEGRAM_BOT_TOKEN": secrets_in.get(
+            "telegram", current.get("DEPRADAR_TELEGRAM_BOT_TOKEN", "")
+        ),
+        "DEPRADAR_CONFIG_DIR": str(CONFIG_DIR),
+    }
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(CONFIG_DIR, 0o750)
+    write_private(ENV_FILE, render_env(values))
+    write_private(CADDYFILE, render_caddyfile(state), 0o644)
+    write_private(PORTS_FILE, render_ports(state), 0o644)
+    save_state(state)
+
+
+# ─── Host inspection ─────────────────────────────────────────────────────────────────────────
+
+
+def os_release() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for candidate in (Path("/etc/os-release"), Path("/usr/lib/os-release")):
+        if candidate.exists():
+            for line in candidate.read_text().splitlines():
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    values[key] = value.strip().strip('"')
+            break
+    return values
+
+
+def version_tuple(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", text)[:3]) or (0,)
+
+
+def meminfo() -> dict[str, int]:
+    values = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            values[key] = int(rest.split()[0]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return values
+
+
+def gib(value: float) -> str:
+    return f"{value / 1024**3:.1f} GiB"
+
+
+def human(size: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def docker_versions() -> tuple[str | None, str | None]:
+    if not shutil.which("docker"):
+        return None, None
+    code, server = run(
+        ["docker", "version", "--format", "{{.Server.Version}}"], check=False, capture=True
+    )
+    compose_code, compose_version = run(
+        ["docker", "compose", "version", "--short"], check=False, capture=True
+    )
+    return (server.strip() if code == 0 else None), (
+        compose_version.strip() if compose_code == 0 else None
+    )
+
+
+def port_free(port: int, address: str = "0.0.0.0") -> bool:
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((address, port))
+        except OSError:
+            return False
+    return True
+
+
+def our_proxy_running() -> bool:
+    if not ENV_FILE.exists() or not PORTS_FILE.exists():
+        return False
+    code, out = compose("ps", "--status", "running", "--services", check=False, capture=True)
+    return code == 0 and "proxy" in out.split()
+
+
+def local_addresses() -> set[str]:
+    found: set[str] = set()
+    code, out = (
+        run(["hostname", "-I"], check=False, capture=True) if shutil.which("hostname") else (1, "")
+    )
+    if code == 0:
+        found.update(out.split())
+    try:
+        found.update(info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None))
+    except OSError:
+        pass
+    return found
+
+
+def reachable(host: str, port: int = 443, timeout: float = 4) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+# ─── Probing the running service ─────────────────────────────────────────────────────────────
+
+
+def probe(state: dict[str, Any], path: str = "/health/ready") -> dict[str, Any]:
+    """Request a path through the edge proxy exactly as a browser would, from this host."""
+    mode = state["mode"]
+    parsed = urllib.parse.urlsplit(public_url(state))
+    host_header = parsed.netloc
+    started = time.monotonic()
+    result: dict[str, Any] = {"ok": False, "status": None, "detail": "", "certificate": None}
+    try:
+        if mode in {"https", "tls-internal"}:
+            context = ssl.create_default_context()
+            if mode == "tls-internal":
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+            raw = socket.create_connection(("127.0.0.1", 443), timeout=8)
+            connection = context.wrap_socket(raw, server_hostname=state["domain"])
+            certificate = connection.getpeercert()
+            if certificate:
+                issuer = dict(item[0] for item in certificate.get("issuer", ()))
+                result["certificate"] = {
+                    "issuer": issuer.get("organizationName") or issuer.get("commonName", ""),
+                    "expires": certificate.get("notAfter"),
+                }
+        else:
+            target = (
+                "127.0.0.1"
+                if mode == "proxy" or state.get("bind") in {None, "", "0.0.0.0"}
+                else state["bind"]
+            )
+            connection = socket.create_connection((target, int(state["port"])), timeout=8)
+        with connection:
+            request = f"GET {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\nUser-Agent: depradarctl\r\n\r\n"
+            connection.sendall(request.encode())
+            response = b""
+            while chunk := connection.recv(65536):
+                response += chunk
+                if len(response) > 1_000_000:
+                    break
+        head, _, body = response.partition(b"\r\n\r\n")
+        status = int(head.split(b" ", 2)[1]) if head.startswith(b"HTTP/") else None
+        result.update(status=status, ok=status == 200, body=body.decode(errors="replace")[:2000])
+        result["detail"] = f"HTTP {status}"
+    except ssl.SSLCertVerificationError as error:
+        result["detail"] = f"certificate not trusted yet ({error.verify_message})"
+    except (OSError, ValueError, IndexError) as error:
+        result["detail"] = str(error) or error.__class__.__name__
+    result["latency_ms"] = int((time.monotonic() - started) * 1000)
+    return result
+
+
+def services_status() -> dict[str, dict[str, Any]]:
+    code, out = compose("ps", "-a", "--format", "json", check=False, capture=True)
+    rows: list[dict[str, Any]] = []
+    if code == 0 and out.strip():
+        text = out.strip()
+        try:
+            parsed = json.loads(text)
+            rows = parsed if isinstance(parsed, list) else [parsed]
+        except json.JSONDecodeError:
+            rows = [json.loads(line) for line in text.splitlines() if line.strip().startswith("{")]
+    return {row.get("Service", ""): row for row in rows}
+
+
+def service_logs(service: str, lines: int = 12) -> str:
+    """The service's own recent output, without Compose's name prefix, as a hint block."""
+    _, logs = compose("logs", "--no-color", "--tail", "60", service, check=False)
+    tail: list[str] = []
+    for line in logs.splitlines():
+        text = line.split("|", 1)[-1].strip()
+        if text and (not tail or tail[-1] != text):  # a crash loop repeats the same lines
+            tail.append(text)
+    return "\n".join(f"│ {line[:200]}" for line in tail[-lines:])
+
+
+def wait_healthy(task: Task, timeout: float = 600, final: bool = False) -> None:
+    """Wait until every service is healthy; fail fast with the logs of one that stopped."""
+    deadline = time.monotonic() + timeout
+    while True:
+        rows = services_status()
+        migrate = rows.get("migrate", {})
+        if migrate.get("State") == "exited" and migrate.get("ExitCode") not in (0, None):
+            raise Abort("Database migration failed", service_logs("migrate"))
+        pending = []
+        for service in SERVICES:
+            row = rows.get(service, {})
+            state, health = row.get("State", "missing"), row.get("Health", "")
+            if state in {"exited", "dead", "restarting"}:
+                raise Abort(
+                    f"The {service} service stopped while starting",
+                    service_logs(service) + f"\nInspect: depradarctl logs {service}",
+                )
+            healthy = health == "healthy" or (service in NO_HEALTHCHECK and not health)
+            if state != "running" or not healthy:
+                pending.append(service)
+        if not pending or final:
+            return
+        ready = len(SERVICES) - len(pending)
+        task.note(f"{ready}/{len(SERVICES)} ready · waiting for {', '.join(pending)}")
+        if time.monotonic() > deadline:
+            raise Abort(
+                f"Services did not become healthy within {int(timeout)}s: {', '.join(pending)}",
+                "Inspect them with `depradarctl logs " + " ".join(pending) + "`.",
+            )
+        time.sleep(2)
+
+
+def owner_initialized() -> bool | None:
+    script = (
+        "import json,urllib.request;"
+        "print(json.load(urllib.request.urlopen('http://localhost:8000/api/auth/status',timeout=5))['initialized'])"
+    )
+    code, out = compose("exec", "-T", "api", "python", "-c", script, check=False, capture=True)
+    if code:
+        return None
+    return out.strip().splitlines()[-1] == "True"
+
+
+# ─── Host changes ────────────────────────────────────────────────────────────────────────────
+
+
+def download(url: str, destination: Path) -> None:
+    with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 - fixed HTTPS URLs
+        data = response.read()
+    write_private(destination, data.decode(), 0o644)
+
+
+def install_docker(release: dict[str, str]) -> None:
+    family = {release.get("ID", ""), *release.get("ID_LIKE", "").split()}
+    distro = release.get("ID", "")
+    with ui.task("Installing Docker Engine from download.docker.com") as task:
+        if family & {"debian", "ubuntu"}:
+            repo = (
+                "ubuntu"
+                if (distro == "ubuntu" or "ubuntu" in family and release.get("UBUNTU_CODENAME"))
+                else "debian"
+            )
+            codename = (
+                release.get("UBUNTU_CODENAME")
+                if repo == "ubuntu"
+                else release.get("VERSION_CODENAME")
+            )
+            if not codename:
+                raise Abort("Cannot determine the distribution codename for the Docker repository")
+            env = {"DEBIAN_FRONTEND": "noninteractive"}
+            run(["apt-get", "update", "-q"], task=task, env=env)
+            run(["apt-get", "install", "-y", "-q", "ca-certificates"], task=task, env=env)
+            download(
+                f"https://download.docker.com/linux/{repo}/gpg",
+                Path("/etc/apt/keyrings/docker.asc"),
+            )
+            _, arch = run(["dpkg", "--print-architecture"], capture=True)
+            write_private(
+                Path("/etc/apt/sources.list.d/docker.list"),
+                f"deb [arch={arch.strip()} signed-by=/etc/apt/keyrings/docker.asc] "
+                f"https://download.docker.com/linux/{repo} {codename} stable\n",
+                0o644,
+            )
+            run(["apt-get", "update", "-q"], task=task, env=env)
+            run(
+                [
+                    "apt-get",
+                    "install",
+                    "-y",
+                    "-q",
+                    "docker-ce",
+                    "docker-ce-cli",
+                    "containerd.io",
+                    "docker-buildx-plugin",
+                    "docker-compose-plugin",
+                ],
+                task=task,
+                env=env,
+            )
+        elif family & {"fedora", "rhel", "centos"}:
+            repo = "fedora" if "fedora" in family else ("centos" if distro == "centos" else "rhel")
+            download(
+                f"https://download.docker.com/linux/{repo}/docker-ce.repo",
+                Path("/etc/yum.repos.d/docker-ce.repo"),
+            )
+            run(
+                [
+                    "dnf",
+                    "-y",
+                    "install",
+                    "docker-ce",
+                    "docker-ce-cli",
+                    "containerd.io",
+                    "docker-buildx-plugin",
+                    "docker-compose-plugin",
+                ],
+                task=task,
+            )
+        else:
+            raise Abort(
+                f"Automatic Docker installation is not available for {release.get('PRETTY_NAME', 'this system')}",
+                "Install Docker Engine with the Compose plugin (https://docs.docker.com/engine/install/), then re-run.",
+            )
+        run(["systemctl", "enable", "--now", "docker"], task=task)
+
+
+def install_package(name: str, release: dict[str, str]) -> None:
+    family = {release.get("ID", ""), *release.get("ID_LIKE", "").split()}
+    with ui.task(f"Installing {name}") as task:
+        if family & {"debian", "ubuntu"}:
+            run(
+                ["apt-get", "install", "-y", "-q", name],
+                task=task,
+                env={"DEBIAN_FRONTEND": "noninteractive"},
+            )
+        elif family & {"fedora", "rhel", "centos"}:
+            run(["dnf", "-y", "install", name], task=task)
+        else:
+            raise Abort(f"Install {name} with your package manager, then re-run")
+
+
+def create_swap(size_gib: int = 2) -> None:
+    path = Path("/swapfile")
+    with ui.task(f"Creating a {size_gib} GiB swap file for image builds") as task:
+        if not path.exists():
+            run(["fallocate", "-l", f"{size_gib}G", str(path)], task=task)
+            os.chmod(path, 0o600)
+            run(["mkswap", str(path)], task=task)
+        run(["swapon", str(path)], task=task, check=False)
+        fstab = Path("/etc/fstab")
+        if str(path) not in fstab.read_text():
+            with fstab.open("a") as stream:
+                stream.write(f"{path} none swap sw 0 0\n")
+
+
+def open_firewall(state: dict[str, Any]) -> None:
+    ports = (
+        ["80/tcp", "443/tcp", "443/udp"]
+        if state["mode"] in {"https", "tls-internal"}
+        else ([f"{state['port']}/tcp"] if state["mode"] == "http" else [])
+    )
+    if not ports:
+        return
+    if shutil.which("ufw"):
+        code, out = run(["ufw", "status"], check=False, capture=True)
+        if code == 0 and "Status: active" in out:
+            for port in ports:
+                run(["ufw", "allow", port])
+            ui.ok("Opened " + ", ".join(ports) + " in ufw")
+            return
+    if shutil.which("firewall-cmd"):
+        code, _ = run(["firewall-cmd", "--state"], check=False)
+        if code == 0:
+            for port in ports:
+                run(["firewall-cmd", "--permanent", f"--add-port={port}"])
+            run(["firewall-cmd", "--reload"])
+            ui.ok("Opened " + ", ".join(ports) + " in firewalld")
+            return
+    ui.info(
+        "No active host firewall found; check your cloud provider's firewall allows "
+        + ", ".join(ports)
+    )
+
+
+def install_backup_timer() -> bool:
+    if not Path("/run/systemd/system").exists():
+        ui.warn(
+            "systemd is not running; daily backups were not scheduled",
+            "Run `depradarctl backup` from your own scheduler.",
+        )
+        return False
+    write_private(
+        UNIT_DIR / "depradar-backup.service",
+        "[Unit]\nDescription=DepRadar verified backup\nAfter=docker.service\nRequires=docker.service\n\n"
+        "[Service]\nType=oneshot\nExecStart=/usr/local/bin/depradarctl backup --quiet\n"
+        "Nice=10\nIOSchedulingClass=idle\n",
+        0o644,
+    )
+    write_private(
+        UNIT_DIR / "depradar-backup.timer",
+        "[Unit]\nDescription=Daily DepRadar backup\n\n"
+        "[Timer]\nOnCalendar=*-*-* 03:15:00\nRandomizedDelaySec=20m\nPersistent=true\n\n"
+        "[Install]\nWantedBy=timers.target\n",
+        0o644,
+    )
+    run(["systemctl", "daemon-reload"])
+    run(["systemctl", "enable", "--now", "depradar-backup.timer"])
+    return True
+
+
+def backup_timer_active() -> bool:
+    if not shutil.which("systemctl") or not Path("/run/systemd/system").exists():
+        return False
+    code, _ = run(["systemctl", "is-active", "--quiet", "depradar-backup.timer"], check=False)
+    return code == 0
+
+
+def link_tool() -> None:
+    target = ROOT / "deploy" / "depradarctl"
+    if BIN_LINK.is_symlink() or BIN_LINK.exists():
+        if BIN_LINK.resolve() == target:
+            return
+        BIN_LINK.unlink()
+    BIN_LINK.symlink_to(target)
+
+
+# ─── Wizard ──────────────────────────────────────────────────────────────────────────────────
+
+
+def validate_domain(value: str) -> str | None:
+    try:
+        ipaddress.ip_address(value)
+        return "Use a domain name; certificates cannot be issued for an IP address"
+    except ValueError:
+        pass
+    return None if HOSTNAME.match(value) else "Enter a domain such as depradar.example.com"
+
+
+def validate_host(value: str) -> str | None:
+    try:
+        ipaddress.ip_address(value)
+        return None
+    except ValueError:
+        return (
+            None
+            if HOSTNAME.match(value) or value == "localhost"
+            else "Enter a hostname or IP address"
+        )
+
+
+def validate_port(value: str) -> str | None:
+    return (
+        None if value.isdigit() and 1 <= int(value) <= 65535 else "Enter a port between 1 and 65535"
+    )
+
+
+def validate_url(value: str) -> str | None:
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.path not in {"", "/"}
+    ):
+        return "Enter the public origin, such as https://depradar.example.com (no path)"
+    return None
+
+
+def read_secret_file(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        return Path(path).read_text().rstrip("\r\n")
+    except OSError as error:
+        raise Abort(f"Cannot read {path}: {error.strerror}") from error
+
+
+def guess_host() -> str:
+    for address in sorted(local_addresses()):
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if parsed.version == 4 and not parsed.is_loopback:
+            return address
+    return "localhost"
+
+
+def wizard(
+    args: argparse.Namespace, previous: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    state = dict(previous)
+    mode = args.mode or ui.choose(
+        "How should DepRadar be reached?", MODES, previous.get("mode", "https")
+    )
+    if mode not in MODES:
+        raise Abort(f"Unknown mode {mode}", "Choose one of: " + ", ".join(MODES))
+    state["mode"] = mode
+    for key in ("domain", "email", "public_url", "host", "port", "bind"):
+        if previous.get("mode") != mode:
+            state.pop(key, None)
+    if mode in {"https", "tls-internal"}:
+        check = validate_domain if mode == "https" else validate_host
+        state["domain"] = args.domain or ui.ask("Domain name", state.get("domain"), validate=check)
+        error = check(state["domain"])
+        if error:
+            raise Abort(error)
+        if mode == "https":
+            email = (
+                args.email
+                if args.email is not None
+                else ui.ask(
+                    "Email for certificate notices",
+                    state.get("email"),
+                    optional=True,
+                    validate=lambda value: None if EMAIL.match(value) else "Enter an email address",
+                )
+            )
+            if email and not EMAIL.match(email):
+                raise Abort("Enter a valid --email address")
+            state["email"] = email
+    elif mode == "proxy":
+        state["public_url"] = args.public_url or ui.ask(
+            "Public URL your proxy serves", state.get("public_url"), validate=validate_url
+        )
+        if validate_url(state["public_url"]):
+            raise Abort(validate_url(state["public_url"]) or "")
+        state["port"] = int(
+            args.port
+            or ui.ask(
+                "Local port for your proxy to target",
+                str(state.get("port", 8080)),
+                validate=validate_port,
+            )
+        )
+    else:
+        state["host"] = args.host or ui.ask(
+            "Hostname or IP users will open",
+            state.get("host") or guess_host(),
+            validate=validate_host,
+        )
+        state["port"] = int(
+            args.port or ui.ask("Port", str(state.get("port", 80)), validate=validate_port)
+        )
+        state["bind"] = args.bind or state.get("bind") or "0.0.0.0"
+        ui.warn(
+            "Plain HTTP sends passwords and tokens unencrypted; use it only on a trusted network"
+        )
+    current = read_env()
+    secrets_in: dict[str, str] = {}
+    prompts = (
+        (
+            "smtp",
+            "SMTP password for email alerts",
+            "DEPRADAR_SMTP_PASSWORD",
+            args.smtp_password_file,
+        ),
+        (
+            "telegram",
+            "Telegram bot token for chat alerts",
+            "DEPRADAR_TELEGRAM_BOT_TOKEN",
+            args.telegram_token_file,
+        ),
+    )
+    if ui.interactive and not ui.assume_yes:
+        ui.info(
+            "Email and Telegram are set up in the dashboard; only their secrets are stored here."
+        )
+    for key, label, variable, path in prompts:
+        value = read_secret_file(path)
+        if value is None and ui.interactive and not ui.assume_yes:
+            if current.get(variable):
+                if ui.confirm(f"Replace the stored {label.split(' for ')[0]}?", False):
+                    value = ui.ask(label, None, secret=True, optional=True)
+            else:
+                value = ui.ask(label, None, secret=True, optional=True) or None
+        if value is not None:
+            secrets_in[key] = value
+    backups = state.get("backups", {"enabled": True, "keep": 14})
+    if args.no_backups:
+        backups["enabled"] = False
+    elif ui.interactive and not ui.assume_yes:
+        backups["enabled"] = ui.confirm(
+            "Schedule verified daily backups?", backups.get("enabled", True)
+        )
+    if args.keep_backups:
+        backups["keep"] = args.keep_backups
+    state["backups"] = backups
+    return state, secrets_in
+
+
+def review(state: dict[str, Any]) -> None:
+    rows = [("Mode", f"{state['mode']} · {MODES[state['mode']]}"), ("Address", public_url(state))]
+    if state["mode"] == "proxy":
+        rows.append(("Listens on", f"127.0.0.1:{state['port']} (point your proxy here)"))
+    if state.get("email"):
+        rows.append(("ACME email", state["email"]))
+    backups = state.get("backups", {})
+    rows.append(
+        (
+            "Backups",
+            f"daily, keep {backups.get('keep', 14)}" if backups.get("enabled") else "not scheduled",
+        )
+    )
+    for key, value in rows:
+        ui.info(f"{key.ljust(11)} {value}")
+
+
+# ─── Preflight ───────────────────────────────────────────────────────────────────────────────
+
+
+def preflight() -> dict[str, Any]:
+    """Inspect the host. Returns facts; raises Abort only for hard blockers."""
+    facts: dict[str, Any] = {}
+    if platform.system() != "Linux":
+        raise Abort(
+            "depradarctl manages Linux servers",
+            "Use Docker Compose directly for local development (see README.md).",
+        )
+    release = os_release()
+    facts["release"] = release
+    machine = platform.machine()
+    if machine not in {"x86_64", "amd64", "aarch64", "arm64"}:
+        raise Abort(
+            f"Unsupported CPU architecture {machine}",
+            "The pinned scanner is published for x86_64 and arm64.",
+        )
+    memory = meminfo()
+    total, swap = memory.get("MemTotal", 0), memory.get("SwapTotal", 0)
+    facts.update(memory=total, swap=swap)
+    disk = shutil.disk_usage("/var/lib/docker" if Path("/var/lib/docker").exists() else "/")
+    facts["disk_free"] = disk.free
+    ui.ok(
+        f"{release.get('PRETTY_NAME', 'Linux')} · {machine}",
+        f"{os.cpu_count()} CPU · {gib(total)} RAM · {gib(swap)} swap · {gib(disk.free)} free",
+    )
+    if disk.free < 6 * 1024**3:
+        raise Abort(
+            f"Only {gib(disk.free)} of disk space is free",
+            "DepRadar needs at least 6 GiB for images and data.",
+        )
+    if disk.free < 12 * 1024**3:
+        ui.warn(f"{gib(disk.free)} free; 12 GiB or more leaves room for upgrades and backups")
+    if total and total < 900 * 1024**2:
+        raise Abort(
+            f"{gib(total)} of memory is too little", "DepRadar needs at least 1 GiB of RAM."
+        )
+    facts["needs_swap"] = total + swap < 2 * 1024**3
+    if facts["needs_swap"]:
+        ui.warn(f"{gib(total + swap)} of memory and swap; image builds need about 2 GiB")
+    server, compose_version = docker_versions()
+    facts.update(docker=server, compose=compose_version)
+    if server and compose_version:
+        if version_tuple(server) < MIN_DOCKER:
+            raise Abort(
+                f"Docker {server} is too old",
+                f"Upgrade to Docker {'.'.join(map(str, MIN_DOCKER))} or newer.",
+            )
+        if version_tuple(compose_version) < MIN_COMPOSE:
+            raise Abort(
+                f"Docker Compose {compose_version} is too old",
+                "Upgrade the docker-compose-plugin package to 2.24 or newer.",
+            )
+        ui.ok(f"Docker {server} · Compose {compose_version}")
+    elif shutil.which("docker") and not server:
+        raise Abort(
+            "Docker is installed but its daemon is not reachable",
+            "Start it with `systemctl start docker`, then re-run.",
+        )
+    else:
+        ui.warn("Docker Engine is not installed")
+    facts["git"] = bool(shutil.which("git"))
+    if not facts["git"]:
+        ui.warn("git is not installed; upgrades need it")
+    unreachable = [
+        host
+        for host in ("registry-1.docker.io", "github.com", "api.osv.dev")
+        if not reachable(host)
+    ]
+    if unreachable:
+        ui.warn(
+            "Cannot reach " + ", ".join(unreachable),
+            "Image builds and vulnerability lookups need outbound HTTPS.",
+        )
+    else:
+        ui.ok("Outbound HTTPS to Docker Hub, GitHub, and OSV")
+    return facts
+
+
+# ─── Commands ────────────────────────────────────────────────────────────────────────────────
+
+
+def ensure_prerequisites(facts: dict[str, Any], args: argparse.Namespace) -> None:
+    release = facts["release"]
+    if not facts.get("docker"):
+        if not ui.confirm("Install Docker Engine from Docker's official repository?", True):
+            raise Abort(
+                "Docker is required", "Install Docker Engine with the Compose plugin, then re-run."
+            )
+        install_docker(release)
+        server, compose_version = docker_versions()
+        if not server or not compose_version:
+            raise Abort(
+                "Docker was installed but is not running", "Check `systemctl status docker`."
+            )
+        ui.ok(f"Docker {server} · Compose {compose_version}")
+    if not facts.get("git") and ui.confirm("Install git for upgrades?", True):
+        install_package("git", release)
+    if facts.get("needs_swap") and not args.no_swap and not Path("/swapfile").exists():
+        if ui.confirm("Add a 2 GiB swap file so image builds do not run out of memory?", True):
+            create_swap()
+
+
+def build_and_start(state: dict[str, Any], *, pull: bool = True, first: bool = False) -> None:
+    label = "Building images (the first build takes a few minutes)" if first else "Building images"
+    with ui.task(label) as task:
+        compose("build", *(["--pull"] if pull else []), task=task)
+    with ui.task("Starting services") as task:
+        start_services(task)
+
+
+def start_services(task: Task, *extra: str) -> None:
+    """`compose up`, then report the failing service's own logs rather than Compose's summary."""
+    code, output = compose("up", "-d", "--remove-orphans", *extra, task=task, check=False)
+    if code:
+        wait_healthy(task, final=True)
+        raise CommandFailed(compose_command("up", "-d"), code, output.splitlines())
+    wait_healthy(task)
+
+
+def verify_endpoint(state: dict[str, Any], timeout: float = 180) -> bool:
+    label = "Issuing the certificate and checking " if state["mode"] == "https" else "Checking "
+    deadline = time.monotonic() + timeout
+    result: dict[str, Any] = {}
+    try:
+        with ui.task(label + public_url(state)) as task:
+            while True:
+                result = probe(state)
+                if result["ok"]:
+                    break
+                task.note(result["detail"])
+                if time.monotonic() > deadline:
+                    raise Abort(result["detail"])
+                time.sleep(3)
+    except Abort:
+        hint = "Caddy keeps retrying. Check DNS and that ports 80 and 443 are open to the internet."
+        if state["mode"] != "https":
+            hint = "Inspect `depradarctl logs proxy web api`."
+        _, logs = compose("logs", "--no-color", "--tail", "60", "proxy", check=False)
+        errors = [
+            line for line in logs.splitlines() if '"error"' in line or "error" in line.lower()
+        ][-3:]
+        ui.warn(
+            f"{public_url(state)} is not answering yet: {result.get('detail', 'no response')}", hint
+        )
+        for line in errors:
+            ui.info(line[:180])
+        return False
+    certificate = result.get("certificate")
+    if certificate:
+        ui.ok("Certificate", f"{certificate['issuer']} · valid until {certificate['expires']}")
+    return True
+
+
+def owner_password(args: argparse.Namespace) -> str | None:
+    """From --owner-password-file, or two hidden prompts; None when nobody can type it."""
+    password = read_secret_file(getattr(args, "owner_password_file", None))
+    if password is not None:
+        if not 12 <= len(password) <= 128:
+            raise Abort("The owner password must contain 12–128 characters")
+        return password
+    if not ui.interactive or ui.assume_yes:
+        return None
+
+    def long_enough(value: str) -> str | None:
+        return None if 12 <= len(value) <= 128 else "Use 12–128 characters"
+
+    while True:
+        password = ui.ask("Owner password (12–128 characters)", secret=True, validate=long_enough)
+        if ui.ask("Confirm the password", secret=True, validate=lambda value: None) == password:
+            return password
+        ui.emit(f"      {ui.style('31', 'The passwords do not match; try again.')}", force=True)
+
+
+def send_password(command: str, password: str) -> None:
+    # The CLI reads the password twice from stdin; it never reaches arguments, files, or logs.
+    compose("exec", "-T", "api", "depradar", command, stdin_text=f"{password}\n{password}\n")
+
+
+def setup_owner(args: argparse.Namespace) -> str:
+    initialized = owner_initialized()
+    if initialized:
+        ui.ok("Owner account already exists")
+        return "existing"
+    if initialized is None:
+        raise Abort("Cannot reach the API to check the owner account", "Run `depradarctl doctor`.")
+    if ui.interactive and not getattr(args, "owner_password_file", None) and not ui.assume_yes:
+        ui.info("You sign in to the dashboard with this password. It is sent only to the API.")
+    password = owner_password(args)
+    if password is None:
+        ui.warn("Owner account not created", "Run `sudo depradarctl owner setup` in a terminal.")
+        return "pending"
+    send_password("setup-owner", password)
+    ui.ok("Owner account created")
+    return "created"
+
+
+def finish_card(state: dict[str, Any], owner: str, reachable_now: bool) -> None:
+    url = public_url(state)
+    rows = [
+        ("Dashboard", url),
+        ("CI URL", f"{url}  (DEPRADAR_URL)"),
+        ("Settings", str(ENV_FILE)),
+        (
+            "Backups",
+            f"{BACKUP_DIR} · daily" if backup_timer_active() else "manual: depradarctl backup",
+        ),
+        ("Log", str(LOG_DIR / "depradarctl.log")),
+    ]
+    ui.card("DepRadar is running" if reachable_now else "DepRadar is installed", rows)
+    ui.emit()
+    ui.emit(f"  {ui.bold('Next steps')}")
+    if owner == "pending":
+        ui.emit(f"    1. Create the owner account: {ui.accent('sudo depradarctl owner setup')}")
+    else:
+        ui.emit(f"    1. Sign in at {ui.accent(url)}")
+    ui.emit("    2. Settings → CI/CD access: create a pipeline token, then add DEPRADAR_URL and")
+    ui.emit("       DEPRADAR_TOKEN to your CI (see docs/CI_CD.md)")
+    ui.emit("    3. Notifications: connect email or Telegram for alerts")
+    ui.emit()
+    ui.emit(f"  {ui.dim('Manage with')} depradarctl status · logs · upgrade · backup · doctor")
+    ui.emit()
+
+
+def cmd_install(args: argparse.Namespace) -> None:
+    ui.banner(f"server installation {ui.dim('v' + TOOL_VERSION)}")
+    previous = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    if previous and not args.reconfigure:
+        ui.emit()
+        ui.info(
+            f"An installation already exists ({public_url(previous)}); resuming it with the saved settings."
+        )
+        ui.info("Use `depradarctl configure` to change settings, `depradarctl upgrade` to update.")
+    ui.section("Checking this server")
+    facts = preflight()
+    ui.section("Configuration")
+    if previous and not args.reconfigure:
+        state, secrets_in = previous, {}
+        review(state)
+    else:
+        state, secrets_in = wizard(args, previous)
+        ui.emit()
+        review(state)
+        if not ui.confirm("Install with these settings?", True):
+            raise Abort("Installation cancelled; nothing was changed")
+    ui.section("Preparing the server")
+    preflight_ports(state)
+    ensure_prerequisites(facts, args)
+    state.setdefault("installed_at", now())
+    state["tool_version"] = TOOL_VERSION
+    if facts.get("git") or shutil.which("git"):
+        state["ref"] = git("rev-parse", "HEAD", check=False) or state.get("ref", "")
+    apply_configuration(state, secrets_in)
+    ui.ok("Configuration written", str(CONFIG_DIR))
+    ui.section("Deploying")
+    build_and_start(state, first=not previous)
+    reachable_now = verify_endpoint(state)
+    ui.section("Owner account")
+    owner = setup_owner(args)
+    ui.section("Operations")
+    link_tool()
+    ui.ok("Command installed", str(BIN_LINK))
+    if state.get("backups", {}).get("enabled") and install_backup_timer():
+        ui.ok("Daily verified backups scheduled", "systemctl list-timers depradar-backup.timer")
+    if not args.no_firewall:
+        open_firewall(state)
+    state["updated_at"] = now()
+    save_state(state)
+    finish_card(state, owner, reachable_now)
+
+
+def preflight_ports(state: dict[str, Any]) -> None:
+    mode = state["mode"]
+    wanted = [80, 443] if mode in {"https", "tls-internal"} else [int(state["port"])]
+    address = "127.0.0.1" if mode == "proxy" else (state.get("bind") or "0.0.0.0")
+    if our_proxy_running():
+        return
+    busy = [port for port in wanted if not port_free(port, address)]
+    if busy:
+        raise Abort(
+            f"Port {', '.join(map(str, busy))} is already in use on {address}",
+            "Stop the service using it (`ss -ltnp` shows which), or choose the `proxy` mode to run "
+            "behind your existing web server.",
+        )
+    ui.ok(f"Port{'s' if len(wanted) > 1 else ''} {', '.join(map(str, wanted))} free on {address}")
+    if mode == "https":
+        try:
+            resolved = sorted({info[4][0] for info in socket.getaddrinfo(state["domain"], 443)})
+        except socket.gaierror:
+            raise Abort(
+                f"{state['domain']} does not resolve",
+                "Create an A (and optionally AAAA) record pointing to this server, wait for it to "
+                "propagate, then re-run. Let's Encrypt validates the domain over port 80.",
+            ) from None
+        if set(resolved) & local_addresses():
+            ui.ok(f"{state['domain']} points to this server", ", ".join(resolved))
+        else:
+            ui.warn(
+                f"{state['domain']} resolves to {', '.join(resolved)}",
+                "That address is not on this machine. Expected behind cloud NAT; otherwise fix DNS first.",
+            )
+
+
+def cmd_configure(args: argparse.Namespace) -> None:
+    ui.banner("reconfigure")
+    previous = load_state()
+    ui.section("Configuration")
+    state, secrets_in = wizard(args, previous)
+    ui.emit()
+    review(state)
+    if not ui.confirm("Apply these settings?", True):
+        raise Abort("Nothing was changed")
+    if (state["mode"], state.get("port"), state.get("bind")) != (
+        previous["mode"],
+        previous.get("port"),
+        previous.get("bind"),
+    ):
+        compose("stop", "proxy", check=False)
+        preflight_ports(state)
+    apply_configuration(state, secrets_in)
+    ui.ok("Configuration written", str(CONFIG_DIR))
+    with ui.task("Applying") as task:
+        start_services(task)
+        compose("restart", "proxy", task=task)
+        wait_healthy(task)
+    if state.get("backups", {}).get("enabled"):
+        install_backup_timer()
+    elif (UNIT_DIR / "depradar-backup.timer").exists():
+        run(["systemctl", "disable", "--now", "depradar-backup.timer"], check=False)
+    verify_endpoint(state)
+    state["updated_at"] = now()
+    save_state(state)
+    ui.emit()
+
+
+def now() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def backups_on_disk() -> list[Path]:
+    if not BACKUP_DIR.exists():
+        return []
+    return sorted(
+        BACKUP_DIR.glob("depradar-*.tar.gz"), key=lambda path: path.stat().st_mtime, reverse=True
+    )
+
+
+def make_backup(label: str = "") -> Path:
+    name = f"depradar-{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}{('-' + label) if label else ''}.tar.gz"
+    inside = f"/data/backups/{name}"
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(BACKUP_DIR, 0o700)
+    with ui.task("Creating a verified backup") as task:
+        _, out = compose("exec", "-T", "api", "depradar", "backup", inside, task=task, capture=True)
+        verified = '"verified": true' in out
+        compose("cp", f"api:{inside}", str(BACKUP_DIR / name), task=task)
+        compose("exec", "-T", "api", "rm", "-f", inside, check=False)
+    if not verified:
+        raise Abort(
+            f"The backup {BACKUP_DIR / name} did not pass its restore drill",
+            "Inspect it before relying on it.",
+        )
+    os.chmod(BACKUP_DIR / name, 0o600)
+    ui.ok(f"Backup verified · {human((BACKUP_DIR / name).stat().st_size)}", str(BACKUP_DIR / name))
+    return BACKUP_DIR / name
+
+
+def rotate_backups(keep: int) -> None:
+    scheduled = [
+        path
+        for path in backups_on_disk()
+        if re.fullmatch(r"depradar-\d{8}T\d{6}Z\.tar\.gz", path.name)
+    ]
+    for path in scheduled[keep:]:
+        path.unlink()
+        ui.info(f"Removed old backup {path.name}")
+
+
+def cmd_backup(args: argparse.Namespace) -> None:
+    ui.quiet = args.quiet
+    state = load_state()
+    ui.banner("backup")
+    ui.section("Backup")
+    path = make_backup()
+    rotate_backups(int(args.keep or state.get("backups", {}).get("keep", 14)))
+    ui.info("Archives exclude secrets: also keep a private copy of " + str(ENV_FILE))
+    if args.quiet:
+        print(f"depradar backup verified: {path}")
+    ui.emit()
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    state = load_state()
+    source = Path(args.file).resolve()
+    if not source.is_file():
+        raise Abort(f"{source} is not a file")
+    ui.banner("restore")
+    ui.section("Restore")
+    ui.info(f"Archive: {source} ({human(source.stat().st_size)})")
+    ui.typed_confirmation(
+        "restore", "This replaces every project, finding, and setting with the archive's contents."
+    )
+    safety = None
+    if not args.no_safety_backup and owner_initialized():
+        safety = make_backup("before-restore")
+    with ui.task("Stopping services and clearing data") as task:
+        compose(
+            "rm", "--stop", "--force", "api", "worker", "web", "proxy", "migrate", "db", task=task
+        )
+        for volume in VOLUMES_WITH_DATA:
+            run(["docker", "volume", "rm", "-f", f"{PROJECT}_{volume}"], task=task)
+    staging = Path(tempfile.mkdtemp(prefix="depradar-restore-"))
+    try:
+        # The API container runs as uid 10001; give it a private copy instead of loosening modes.
+        os.chmod(staging, 0o711)
+        staged = staging / "backup.tar.gz"
+        shutil.copyfile(source, staged)
+        os.chown(staged, 10001, 10001)
+        os.chmod(staged, 0o600)
+        with ui.task("Restoring into a fresh database") as task:
+            compose("up", "-d", "db", task=task)
+            compose("run", "--rm", "migrate", task=task)
+            compose(
+                "run",
+                "--rm",
+                "--no-deps",
+                "-v",
+                f"{staged}:/restore/backup.tar.gz:ro",
+                "api",
+                "depradar",
+                "restore-backup",
+                "/restore/backup.tar.gz",
+                task=task,
+            )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    with ui.task("Starting services") as task:
+        start_services(task)
+    verify_endpoint(state)
+    ui.ok(
+        "Restored. Sessions and pipeline tokens were reset: sign in again and create new CI tokens."
+    )
+    if safety:
+        ui.info(f"The previous data is kept in {safety}")
+    ui.emit()
+
+
+def cmd_upgrade(args: argparse.Namespace) -> None:
+    state = load_state()
+    ui.banner("upgrade")
+    if not shutil.which("git") or not (ROOT / ".git").exists():
+        raise Abort(
+            "Upgrades need git and the original repository checkout",
+            f"Expected a git checkout at {ROOT}.",
+        )
+    ui.section("Checking for updates")
+    if git("status", "--porcelain", "--untracked-files=no") and not args.force:
+        raise Abort(f"{ROOT} has local changes", "Commit or discard them, or pass --force.")
+    current = git("rev-parse", "HEAD")
+    with ui.task("Fetching updates") as task:
+        run(
+            ["git", "-c", f"safe.directory={ROOT}", "fetch", "--tags", "--prune", "origin"],
+            task=task,
+        )
+    reference = args.ref or (
+        git("symbolic-ref", "--short", "refs/remotes/origin/HEAD", check=False) or "origin/main"
+    )
+    target = git("rev-parse", f"{reference}^{{commit}}", check=False)
+    if not target:
+        raise Abort(f"{reference} is not a known branch, tag, or commit")
+    if target == current and not args.rebuild:
+        ui.ok(f"Already up to date at {git('describe', '--always', '--tags', current)}")
+        ui.emit()
+        return
+    changes = git(
+        "log", "--oneline", "--no-decorate", f"{current}..{target}", check=False
+    ).splitlines()
+    ui.info(
+        f"{git('describe', '--always', '--tags', current)} → {git('describe', '--always', '--tags', target)}"
+    )
+    for line in changes[:12]:
+        ui.info(ui.dim(line))
+    if len(changes) > 12:
+        ui.info(ui.dim(f"… and {len(changes) - 12} more"))
+    migrations = git(
+        "diff", "--name-only", current, target, "--", "backend/migrations", check=False
+    )
+    if migrations:
+        ui.warn("This update changes the database schema; the pre-upgrade backup is the way back")
+    if not ui.confirm("Upgrade now?", True):
+        raise Abort("Nothing was changed")
+    ui.section("Upgrading")
+    safety = None if args.skip_backup else make_backup("before-upgrade")
+    run(["git", "-c", f"safe.directory={ROOT}", "checkout", "-q", "--detach", target])
+    ui.ok("Source updated", git("describe", "--always", "--tags", target))
+    try:
+        build_and_start(state)
+        if not verify_endpoint(state, timeout=90):
+            raise Abort("The upgraded service is not answering")
+    except (Abort, KeyboardInterrupt) as error:
+        ui.section("Rolling back")
+        run(["git", "-c", f"safe.directory={ROOT}", "checkout", "-q", "--detach", current])
+        try:
+            build_and_start(state, pull=False)
+            ui.ok("Previous version restored", git("describe", "--always", "--tags", current))
+        except Abort as rollback_error:
+            ui.fail("Rollback did not start cleanly", str(rollback_error))
+        if migrations and safety:
+            ui.warn(
+                "The database may already use the newer schema",
+                f"If the previous version misbehaves: sudo depradarctl restore {safety}",
+            )
+        raise Abort(f"Upgrade failed: {error}", getattr(error, "hint", "")) from error
+    state.update(previous_ref=current, ref=target, updated_at=now(), tool_version=TOOL_VERSION)
+    save_state(state)
+    with ui.task("Removing unused images") as task:
+        run(
+            [
+                "docker",
+                "image",
+                "prune",
+                "-f",
+                "--filter",
+                "label=com.docker.compose.project=depradar",
+            ],
+            task=task,
+            check=False,
+        )
+    ui.ok(f"Upgraded to {git('describe', '--always', '--tags', target)}")
+    ui.emit()
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    state = load_state()
+    rows = services_status()
+    result = probe(state)
+    backups = backups_on_disk()
+    timer = ""
+    if shutil.which("systemctl"):
+        _, timer = run(
+            ["systemctl", "list-timers", "depradar-backup.timer", "--no-legend", "--no-pager"],
+            check=False,
+            capture=True,
+        )
+    version = (
+        git("describe", "--always", "--tags", "--dirty", check=False) if shutil.which("git") else ""
+    )
+    report = {
+        "url": public_url(state),
+        "mode": state["mode"],
+        "version": version or state.get("ref", "")[:12],
+        "endpoint": {key: result.get(key) for key in ("ok", "detail", "latency_ms", "certificate")},
+        "services": {
+            name: {
+                "state": row.get("State"),
+                "health": row.get("Health"),
+                "status": row.get("Status"),
+            }
+            for name, row in rows.items()
+        },
+        "backups": {"count": len(backups), "latest": backups[0].name if backups else None},
+    }
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return
+    ui.banner("status")
+    ui.section("Installation")
+    ui.info(f"{'Address':<11} {report['url']}  {ui.dim(state['mode'])}")
+    ui.info(f"{'Version':<11} {report['version']}")
+    ui.info(f"{'Updated':<11} {state.get('updated_at', state.get('installed_at', '?'))}")
+    ui.section("Services")
+    for service in SERVICES:
+        row = rows.get(service, {})
+        state_text, health = row.get("State", "missing"), row.get("Health", "")
+        healthy = state_text == "running" and (health in {"healthy", ""})
+        mark = ui.style("32", "●") if healthy else ui.style("31", "●")
+        ui.emit(f"    {mark} {service:<9} {ui.dim(row.get('Status', 'not created'))}")
+    ui.section("Endpoint")
+    if result["ok"]:
+        ui.ok(f"{report['url']} answers", f"{result['latency_ms']} ms")
+    else:
+        ui.fail(
+            f"{report['url']} is not answering: {result['detail']}", "Run `depradarctl doctor`."
+        )
+    if result.get("certificate"):
+        certificate = result["certificate"]
+        days = int((ssl.cert_time_to_seconds(certificate["expires"]) - time.time()) // 86400)
+        (ui.ok if days > 14 else ui.warn)(
+            f"Certificate from {certificate['issuer']}", f"expires in {days} days"
+        )
+    ui.section("Backups")
+    if backups:
+        age = (time.time() - backups[0].stat().st_mtime) / 3600
+        (ui.ok if age < 36 else ui.warn)(
+            f"{len(backups)} archive{'s' if len(backups) != 1 else ''} · latest {backups[0].name}",
+            f"{age:.0f} h ago",
+        )
+    else:
+        ui.warn("No backups yet", "Create one with `sudo depradarctl backup`.")
+    if timer.strip():
+        ui.info("Next scheduled: " + " ".join(timer.split()[:4]))
+    elif not Path("/run/systemd/system").exists():
+        ui.info("No systemd on this host: run `depradarctl backup --quiet` from cron.")
+    elif state.get("backups", {}).get("enabled"):
+        ui.warn(
+            "The daily backup timer is not active", "Re-run `depradarctl configure` to schedule it."
+        )
+    ui.emit()
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    state = load_state()
+    ui.banner("doctor")
+    ui.section("Host")
+    preflight()
+    ui.section("Configuration")
+    for path in (ENV_FILE, CADDYFILE, PORTS_FILE):
+        if not path.exists():
+            ui.fail(f"{path} is missing", "Run `depradarctl configure` to regenerate it.")
+        elif path == ENV_FILE and path.stat().st_mode & 0o077:
+            ui.warn(f"{path} is readable by other users", f"Fix with `chmod 600 {path}`.")
+        else:
+            ui.ok(str(path))
+    code, out = compose("config", "--quiet", check=False)
+    (
+        ui.ok("Compose configuration is valid")
+        if code == 0
+        else ui.fail("Compose configuration is invalid", out.splitlines()[-1] if out else "")
+    )
+    ui.section("Services")
+    rows = services_status()
+    problems = 0
+    for service in SERVICES:
+        row = rows.get(service)
+        if not row:
+            ui.fail(f"{service} is not created", "Run `depradarctl start`.")
+            problems += 1
+            continue
+        state_text, health = row.get("State"), row.get("Health", "")
+        if state_text == "running" and health in {"healthy", ""}:
+            ui.ok(service, row.get("Status", ""))
+            continue
+        problems += 1
+        ui.fail(f"{service}: {row.get('Status', state_text)}")
+        _, logs = compose("logs", "--no-color", "--tail", "80", service, check=False)
+        for line in [
+            line
+            for line in logs.splitlines()
+            if re.search(r"error|fatal|exception|denied", line, re.I)
+        ][-4:]:
+            ui.info(line[:180])
+    ui.section("Endpoint")
+    result = probe(state)
+    if result["ok"]:
+        ui.ok(f"{public_url(state)} answers", f"{result['latency_ms']} ms")
+    else:
+        problems += 1
+        ui.fail(f"{public_url(state)}: {result['detail']}")
+    initialized = owner_initialized()
+    if initialized is False:
+        ui.warn("No owner account yet", "Create it with `sudo depradarctl owner setup`.")
+    ui.emit()
+    if problems:
+        raise Abort(
+            f"{problems} problem{'s' if problems != 1 else ''} found",
+            "Details: `depradarctl logs <service>`.",
+        )
+    ui.ok("Everything looks healthy")
+    ui.emit()
+
+
+def cmd_logs(args: argparse.Namespace) -> None:
+    load_state()
+    unknown = sorted(set(args.services) - {*SERVICES, "migrate"})
+    if unknown:
+        raise Abort(f"Unknown service {', '.join(unknown)}", "Choose from: " + ", ".join(SERVICES))
+    command = compose_command(
+        "logs", "--tail", str(args.tail), *(["--follow"] if args.follow else []), *args.services
+    )
+    raise SystemExit(attached(command))
+
+
+def cmd_lifecycle(args: argparse.Namespace) -> None:
+    state = load_state()
+    ui.banner(args.command)
+    ui.section(args.command.capitalize())
+    if args.command == "stop":
+        with ui.task("Stopping services") as task:
+            compose("stop", task=task)
+        ui.emit()
+        return
+    with ui.task("Starting services" if args.command == "start" else "Restarting services") as task:
+        start_services(task, *(["--force-recreate"] if args.command == "restart" else []))
+    verify_endpoint(state, timeout=60)
+    ui.emit()
+
+
+def cmd_owner(args: argparse.Namespace) -> None:
+    load_state()
+    ui.banner("owner account")
+    ui.section("Owner account")
+    if args.action == "setup":
+        setup_owner(args)
+    else:
+        password = owner_password(args)
+        if password is None:
+            raise Abort(
+                "A new password is needed", "Run in a terminal, or pass --owner-password-file."
+            )
+        send_password("reset-password", password)
+        ui.ok("Password changed; every session was signed out")
+    ui.emit()
+
+
+def cmd_uninstall(args: argparse.Namespace) -> None:
+    load_state()
+    ui.banner("uninstall")
+    ui.section("Uninstall")
+    if args.purge:
+        ui.typed_confirmation(
+            "delete",
+            "This permanently deletes the database, inventories, certificates, and settings.",
+        )
+    elif not ui.confirm(
+        "Stop and remove the DepRadar containers? Data and settings are kept.", False
+    ):
+        raise Abort("Nothing was changed")
+    with ui.task("Removing containers") as task:
+        compose(
+            "down",
+            "--remove-orphans",
+            *(["--volumes", "--rmi", "local"] if args.purge else []),
+            task=task,
+        )
+    for unit in ("depradar-backup.timer", "depradar-backup.service"):
+        if (UNIT_DIR / unit).exists():
+            run(["systemctl", "disable", "--now", unit], check=False)
+            (UNIT_DIR / unit).unlink()
+    if shutil.which("systemctl"):
+        run(["systemctl", "daemon-reload"], check=False)
+    if BIN_LINK.is_symlink():
+        BIN_LINK.unlink()
+    if args.purge:
+        shutil.rmtree(CONFIG_DIR, ignore_errors=True)
+        ui.ok("Containers, data, and settings removed")
+        if backups_on_disk():
+            ui.info(
+                f"Backups were kept in {BACKUP_DIR}; delete them yourself when no longer needed."
+            )
+    else:
+        ui.ok("Containers removed; data volumes and settings were kept")
+        ui.info(f"Reinstall with: sudo {ROOT / 'deploy' / 'depradarctl'} install")
+    ui.emit()
+
+
+# ─── Entry point ─────────────────────────────────────────────────────────────────────────────
+
+
+@contextmanager
+def exclusive(command: str) -> Iterator[None]:
+    """One mutating operation at a time, including the backup timer."""
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Abort(
+                "Another depradarctl operation is running", "Wait for it to finish, then retry."
+            ) from None
+        handle.write(f"{os.getpid()} {command}\n")
+        handle.flush()
+        yield
+
+
+def open_log() -> None:
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(LOG_DIR, 0o700)
+        descriptor = os.open(
+            LOG_DIR / "depradarctl.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600
+        )
+        ui.log = os.fdopen(descriptor, "a")
+        ui.log.write(f"\n=== {now()} depradarctl {TOOL_VERSION}: {shlex.join(sys.argv[1:])}\n")
+    except OSError:
+        ui.log = None
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(
+        prog="depradarctl",
+        description="Install and operate DepRadar on a Linux server.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Run `depradarctl <command> --help` for a command's options. Docs: docs/DEPLOYMENT.md",
+    )
+    root.add_argument("--version", action="version", version=f"depradarctl {TOOL_VERSION}")
+    commands = root.add_subparsers(dest="command", required=True, metavar="<command>")
+
+    def settings_options(command: argparse.ArgumentParser) -> None:
+        command.add_argument(
+            "--mode", choices=list(MODES), help="How DepRadar is reached (default: https)"
+        )
+        command.add_argument("--domain", help="Domain name (https, tls-internal)")
+        command.add_argument("--email", help="Email for Let's Encrypt expiry notices (https)")
+        command.add_argument("--public-url", help="Public origin served by your proxy (proxy mode)")
+        command.add_argument("--host", help="Hostname or IP users open (http mode)")
+        command.add_argument("--port", type=int, help="Listening port (proxy, http)")
+        command.add_argument("--bind", help="Address to listen on (http mode, default 0.0.0.0)")
+        command.add_argument(
+            "--smtp-password-file", metavar="FILE", help="File holding the SMTP password"
+        )
+        command.add_argument(
+            "--telegram-token-file", metavar="FILE", help="File holding the Telegram bot token"
+        )
+        command.add_argument(
+            "--no-backups", action="store_true", help="Do not schedule daily backups"
+        )
+        command.add_argument(
+            "--keep-backups", type=int, metavar="N", help="Daily archives to keep (default 14)"
+        )
+        command.add_argument(
+            "-y", "--yes", action="store_true", help="Accept defaults; never prompt"
+        )
+
+    install = commands.add_parser("install", help="Install, or resume an interrupted installation")
+    settings_options(install)
+    install.add_argument(
+        "--owner-password-file", metavar="FILE", help="Create the owner non-interactively"
+    )
+    install.add_argument(
+        "--reconfigure", action="store_true", help="Ask for settings again on an existing install"
+    )
+    install.add_argument(
+        "--no-firewall", action="store_true", help="Leave the host firewall unchanged"
+    )
+    install.add_argument("--no-swap", action="store_true", help="Never create a swap file")
+    install.set_defaults(handler=cmd_install, mutating=True)
+
+    configure = commands.add_parser(
+        "configure", help="Change the address, mode, secrets, or backups"
+    )
+    settings_options(configure)
+    configure.set_defaults(handler=cmd_configure, mutating=True)
+
+    status = commands.add_parser("status", help="Services, endpoint, certificate, and backups")
+    status.add_argument("--json", action="store_true", help="Machine-readable output")
+    status.set_defaults(handler=cmd_status, mutating=False)
+
+    upgrade = commands.add_parser(
+        "upgrade", help="Back up, update, verify, and roll back on failure"
+    )
+    upgrade.add_argument(
+        "--ref", help="Branch, tag, or commit (default: the remote's default branch)"
+    )
+    upgrade.add_argument(
+        "--rebuild", action="store_true", help="Rebuild even when already up to date"
+    )
+    upgrade.add_argument("--skip-backup", action="store_true", help="Skip the pre-upgrade backup")
+    upgrade.add_argument(
+        "--force", action="store_true", help="Upgrade despite local source changes"
+    )
+    upgrade.add_argument("-y", "--yes", action="store_true")
+    upgrade.set_defaults(handler=cmd_upgrade, mutating=True)
+
+    backup = commands.add_parser(
+        "backup", help="Create a verified archive in /var/backups/depradar"
+    )
+    backup.add_argument("--keep", type=int, metavar="N", help="Scheduled archives to keep")
+    backup.add_argument("--quiet", action="store_true", help="Minimal output, for timers")
+    backup.set_defaults(handler=cmd_backup, mutating=True)
+
+    restore = commands.add_parser("restore", help="Replace all data with a verified archive")
+    restore.add_argument("file", help="Archive created by `depradarctl backup`")
+    restore.add_argument(
+        "--no-safety-backup", action="store_true", help="Do not back up current data first"
+    )
+    restore.add_argument("-y", "--yes", action="store_true")
+    restore.set_defaults(handler=cmd_restore, mutating=True)
+
+    doctor = commands.add_parser("doctor", help="Diagnose the host, configuration, and services")
+    doctor.set_defaults(handler=cmd_doctor, mutating=False)
+
+    logs = commands.add_parser("logs", help="Show service logs")
+    logs.add_argument(
+        "services", nargs="*", metavar="SERVICE", help="Any of: " + ", ".join(SERVICES)
+    )
+    logs.add_argument("-f", "--follow", action="store_true")
+    logs.add_argument("-n", "--tail", type=int, default=200)
+    logs.set_defaults(handler=cmd_logs, mutating=False)
+
+    for name, text in (
+        ("start", "Start services"),
+        ("stop", "Stop services"),
+        ("restart", "Recreate services"),
+    ):
+        commands.add_parser(name, help=text).set_defaults(handler=cmd_lifecycle, mutating=True)
+
+    owner = commands.add_parser("owner", help="Create the owner account or reset its password")
+    owner.add_argument("action", choices=["setup", "reset-password"])
+    owner.add_argument(
+        "--owner-password-file", metavar="FILE", help="Read the new owner's password from a file"
+    )
+    owner.set_defaults(handler=cmd_owner, mutating=True)
+
+    uninstall = commands.add_parser(
+        "uninstall", help="Remove containers; --purge also deletes data"
+    )
+    uninstall.add_argument(
+        "--purge", action="store_true", help="Also delete data volumes and settings"
+    )
+    uninstall.add_argument("-y", "--yes", action="store_true")
+    uninstall.set_defaults(handler=cmd_uninstall, mutating=True)
+    return root
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    ui.assume_yes = bool(getattr(args, "yes", False))
+    if os.geteuid() == 0:
+        open_log()
+    else:
+        ui.banner(args.command)
+        ui.emit()
+        ui.fail("This command needs root", f"Run: sudo {shlex.join(sys.argv)}")
+        ui.emit()
+        return 1
+    try:
+        if args.mutating:
+            with exclusive(args.command):
+                args.handler(args)
+        else:
+            args.handler(args)
+        return 0
+    except Abort as error:
+        ui.active = None
+        ui.emit(force=True)
+        ui.fail(str(error), error.hint)
+        ui.emit(force=True)
+        return 1
+    except KeyboardInterrupt:
+        ui.active = None
+        ui.emit(force=True)
+        ui.warn("Interrupted. Re-run the same command to continue; every step is safe to repeat.")
+        ui.emit(force=True)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

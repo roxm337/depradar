@@ -28,7 +28,22 @@ live CISA KEV and FIRST EPSS data.
 
 ![CI/CD access settings with scoped pipeline tokens](docs/screenshots/ci-cd-access.png)
 
-## Run with Docker Compose
+## Deploy on a server
+
+One command takes a fresh Linux VPS or machine to a running HTTPS dashboard with an owner account
+and daily verified backups:
+
+```sh
+sudo git clone https://github.com/roxm337/depradar.git /opt/depradar
+sudo /opt/depradar/deploy/depradarctl install
+```
+
+It installs Docker if needed, obtains certificates automatically, and afterwards runs
+`status`, `upgrade` (with automatic rollback), `backup`, `restore`, `doctor`, and `uninstall`.
+It can also run behind an existing reverse proxy or on a private network. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Run with Docker Compose (development)
 
 Requirements: Docker with a running daemon and Compose, plus network access for image/package
 downloads and OSV queries. From the repository root, generate local credentials:

@@ -11,6 +11,7 @@ The repository is split into a FastAPI backend and a Next.js interface:
 - `backend/tests/`: backend unit and integration coverage; `tests/fixtures/manifests` holds one verified fixture per manifest format.
 - `backend/src/depradar/ci_client.py`: standard-library CI client (Python 3.9+); keep it free of third-party and `depradar` imports.
 - `integrations/`: GitHub Action and GitLab CI template wrapping the client.
+- `deploy/`: `depradarctl`, the standard-library server installer and operations tool (Python 3.9+), with its production Compose overlay and unit tests. Production runtime config lives in `/etc/depradar`, never in the repository.
 - `front/app/`: Next.js App Router pages and global styles.
 - `front/lib/`: frontend API and shared helpers.
 - `docs/`: API, operations, and backup guidance.

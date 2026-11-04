@@ -42,8 +42,10 @@ comes from `DEPRADAR_DATABASE_URL`.
 ## Restore an installation
 
 Restore only archives from trusted sources. Checksums detect corruption; they are not signatures
-authenticating who created an archive. New archives use schema revision `0004`. Restore accepts
-`0002` and `0003` archives and fills newly added fields with safe defaults for the current schema.
+authenticating who created an archive. New archives use schema revision `0005`. Restore accepts
+`0002`, `0003`, and `0004` archives and fills newly added fields with safe defaults for the current
+schema. On a server installed with `depradarctl`, use `depradarctl backup` and `depradarctl restore`
+(see [DEPLOYMENT.md](DEPLOYMENT.md)); they wrap these steps.
 
 1. Prepare a new, empty PostgreSQL database and an empty inventory directory.
 2. Configure that database and directory in a fresh backend environment, keeping API/worker stopped.

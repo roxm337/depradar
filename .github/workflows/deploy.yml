@@ -1,0 +1,78 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/**
+      - compose.yaml
+      - backend/Dockerfile
+      - backend/migrations/**
+      - backend/src/**
+      - front/**
+      - .github/workflows/deploy.yml
+  pull_request:
+    paths:
+      - deploy/**
+      - compose.yaml
+      - backend/Dockerfile
+      - backend/migrations/**
+      - backend/src/**
+      - front/**
+      - .github/workflows/deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: depradarctl unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s deploy/tests -v
+
+  install:
+    name: Install and operate on a fresh runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install
+        run: |
+          printf 'ci-owner-password-1234\n' > "$RUNNER_TEMP/owner.pw"
+          sudo deploy/depradarctl install --yes --mode tls-internal --domain depradar.test \
+            --owner-password-file "$RUNNER_TEMP/owner.pw" --no-firewall --no-swap
+      - name: Dashboard and API answer through the edge proxy
+        run: |
+          site=(--resolve depradar.test:443:127.0.0.1 -fsSk)
+          curl "${site[@]}" https://depradar.test/api/auth/status | grep -q '"initialized":true'
+          curl "${site[@]}" -o /dev/null https://depradar.test/login
+          curl "${site[@]}" https://depradar.test/api/backend/auth/status | grep -q initialized
+          # The dashboard proxy never offers owner bootstrap.
+          test "$(curl --resolve depradar.test:443:127.0.0.1 -sSk -o /dev/null -w '%{http_code}' \
+            -X POST -H 'content-type: application/json' --data '{"password":"x"}' \
+            https://depradar.test/api/backend/auth/bootstrap)" = 403
+      - name: Operate
+        run: |
+          sudo depradarctl status
+          sudo depradarctl status --json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['endpoint']['ok'], r"
+          sudo depradarctl doctor
+          sudo depradarctl backup
+          archive=$(sudo sh -c 'ls -1t /var/backups/depradar/depradar-*.tar.gz | head -1')
+          sudo depradarctl restore "$archive" --yes
+          sudo depradarctl upgrade --yes --ref HEAD
+          sudo depradarctl restart
+      - name: Diagnostics
+        if: failure()
+        run: |
+          sudo depradarctl logs --tail 150 || true
+          sudo tail -n 200 /var/log/depradar/depradarctl.log || true
+      - name: Uninstall
+        if: always()
+        run: sudo deploy/depradarctl uninstall --purge --yes || true
