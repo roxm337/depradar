@@ -17,18 +17,9 @@
 .decision-enforced { height: 18px; font-size: 11px; }
 .decision-outcome { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
 .decision-outcome.is-hot { color: var(--critical); font-weight: 550; }
-
-/* Table footer pager (shared Pagination component). */
-.pager { flex-wrap: wrap; gap: 10px 16px; }
-.pager-size { display: inline-flex; align-items: center; gap: 8px; }
-.pager-size .select { width: auto; height: 28px; min-width: 64px; }
-.pager-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
-.pager-nav .num { margin-right: 6px; }
-.pager-nav .icon-btn:disabled { opacity: 0.4; pointer-events: none; }
 .decisions-older { justify-content: space-between; }
 
 @media (max-width: 720px) {
-  .pager-size { display: none; }
   /* The mode tag drops under long project names instead of squeezing them. */
   .decision-project .tag { order: 1; }
 }

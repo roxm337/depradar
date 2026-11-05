@@ -23,21 +23,21 @@ export default function ProjectsPage() {
 
   return (
     <>
-      <PageHead eyebrow="Monitor" title="Projects" lede={<><strong>{projects.length}</strong> projects · {monitored} with scheduled rechecks · {manifestCount} monitored manifests. Open a project to manage its manifests, scans, and alerts.</>} actions={<><button className="btn btn-secondary" onClick={() => workspace.setModal({ kind: "upload" })}><Icon name="upload" size={15}/>Upload manifest</button><button className="btn btn-primary" onClick={() => workspace.setModal({ kind: "project" })}><Icon name="plus" size={15}/>New project</button></>}/>
+      <PageHead title="Projects" lede={<><strong>{projects.length}</strong> projects · {monitored} with scheduled rechecks · {manifestCount} monitored manifests. Open a project to manage its manifests, scans, and alerts.</>} actions={<><button className="btn btn-secondary" onClick={() => workspace.setModal({ kind: "upload" })}><Icon name="upload" size={15}/>Upload manifest</button><button className="btn btn-primary" onClick={() => workspace.setModal({ kind: "project" })}><Icon name="plus" size={15}/>New project</button></>}/>
       <div className="toolbar"><Segmented label="Sort projects" value={sort} onChange={setSort} options={[{ value: "exposure", label: "Most exposed" }, { value: "recent", label: "Recently scanned" }, { value: "name", label: "Name" }]}/></div>
       <Sheet>
         <div className="table-wrap">
-          <table className="table">
+          <table className="table projects-table">
             <thead><tr><th>Project</th><th>Exposure</th><th className="col-optional">Manifests</th><th className="col-optional">Last scan</th><th>Monitoring</th><th className="col-optional">Alerts</th><th className="col-optional" aria-label="Open"/></tr></thead>
             <tbody>
               {!ready ? <SkeletonRows rows={5} columns={7}/> : rows.map(({ project, open, counts, manifests, coverage, scan }) => (
                 <tr key={project.id} className="is-link" onClick={() => workspace.setProjectId(project.id)}>
-                  <td><div className="project-name"><span className="monogram">{monogram(project.name)}</span><div className="cell-main"><b>{project.name}</b><small>{project.description || "No description"}</small></div></div></td>
+                  <td><div className="project-name"><span className="monogram">{monogram(project.name)}</span><div className="cell-main"><b>{project.name}</b><small className="project-desc" title={project.description || undefined}>{project.description || "No description"}</small></div></div></td>
                   <td><div className="cell-main"><StackBar counts={counts} total={open.length}/><small>{open.length ? `${open.length} open · ${counts.critical + counts.high} critical or high` : coverage.state === "verified" ? "No open findings · every manifest clear" : `No known open findings · ${coverageLabel[coverage.state].toLowerCase()}`}</small></div></td>
-                  <td className="col-optional"><div className="cell-main"><span>{manifests.length || "None"}</span><small>{manifests[0] ? `newest ${relativeTime(now, manifests[0].created_at)}` : "Upload a lockfile"}</small></div></td>
-                  <td className="col-optional">{scan ? <div className="cell-main"><span className="status"><i className={`dot ${scanTone(scan)}`}/>{scanLabel(scan)}</span><small>{relativeTime(now, scan.created_at)}{scan.mode === "check" ? " · CI check" : ""}</small></div> : <span className="muted">Never</span>}</td>
+                  <td className="col-optional nowrap"><div className="cell-main"><span>{manifests.length ? `${manifests.length} ${manifests.length === 1 ? "manifest" : "manifests"}` : "None"}</span><small>{manifests[0] ? `updated ${relativeTime(now, manifests[0].created_at)}` : "Upload a lockfile"}</small></div></td>
+                  <td className="col-optional nowrap">{scan ? <div className="cell-main"><span className="status"><i className={`dot ${scanTone(scan)}`}/>{scanLabel(scan)}</span><small>{relativeTime(now, scan.created_at)}{scan.mode === "check" ? " · CI check" : ""}</small></div> : <span className="muted">Never</span>}</td>
                   <td><span className="project-name"><Switch checked={project.monitoring_enabled} label={`Monitoring for ${project.name}`} onChange={(enabled) => void actions.setMonitoring(project, enabled, project.check_interval_hours)}/><small className="muted">{project.monitoring_enabled ? cadence(project.check_interval_hours) : "paused"}</small></span></td>
-                  <td className="col-optional muted">{project.notifications_enabled ? (project.alert_min_severity ? `${project.alert_min_severity} and above` : "Workspace policy") : "Off"}</td>
+                  <td className="col-optional muted nowrap" title={project.notifications_enabled && !project.alert_min_severity ? "Follows the workspace alert policy" : undefined}>{project.notifications_enabled ? (project.alert_min_severity ? `${project.alert_min_severity.charAt(0).toUpperCase()}${project.alert_min_severity.slice(1)} and above` : "Default") : "Off"}</td>
                   <td className="right col-optional"><Icon name="chevron" size={16}/></td>
                 </tr>
               ))}

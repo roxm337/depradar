@@ -1,0 +1,67 @@
+/* Findings: toolbar, filter chips, triage table, and the bulk selection bar. Tokens only. */
+.findings-toolbar { margin-bottom: 10px; }
+.findings-toolbar .search-field { flex: 1 1 280px; max-width: 400px; }
+.findings-toolbar .select { min-width: 0; width: 176px; }
+.findings-toolbar .search-field kbd { position: absolute; right: 8px; pointer-events: none; }
+.findings-toolbar .search-field input { padding-right: 32px; }
+.findings-toolbar .search-field input::-webkit-search-cancel-button { display: none; }
+.toolbar-end { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+
+.findings-filters { gap: 6px; margin-bottom: 14px; }
+.findings-filters .seg { margin-right: 2px; }
+.findings-filters .chip { height: 26px; }
+.sev-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.sev-name { text-transform: capitalize; }
+.filter-divider { width: 1px; height: 18px; margin: 0 4px; background: var(--line-strong); }
+.chip.is-sort { border-style: dashed; color: var(--text-2); }
+.chip.is-sort svg { color: var(--text-3); }
+
+.view-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.view-delete { width: 28px; height: 28px; margin-right: 4px; color: var(--text-3); }
+.view-delete:hover { color: var(--critical); }
+
+.findings-table .col-severity { width: 84px; }
+/* Long package names wrap rather than widen the table past its container. */
+.findings-table .pkg { overflow-wrap: anywhere; }
+.findings-table td.nowrap, .findings-table .nowrap { white-space: nowrap; }
+.findings-table .advisory-id { font-size: 12px; }
+.findings-table .signal-cell { flex-wrap: nowrap; white-space: nowrap; }
+.findings-table .cell-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; display: block; }
+.findings-table .path { max-width: 180px; }
+.findings-table .decision-inline { display: none; }
+.findings-table td:last-child { width: 44px; padding-left: 0; }
+.findings-table .row-action { width: 28px; height: 28px; }
+.findings-table tbody tr.is-selected:hover { background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface-2)); }
+
+.findings-keys { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 10px; font-size: 12px; color: var(--text-3); }
+.findings-keys kbd { margin-right: 2px; }
+
+/* Floats above the table while findings are selected, so bulk actions stay in reach. */
+.bulk-bar { position: sticky; bottom: 16px; z-index: 5; width: fit-content; max-width: 100%; margin: 14px auto 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); font-size: 13px; animation: rise 0.16s var(--ease) both; }
+.bulk-bar b { font-weight: 600; }
+.bulk-sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+.bulk-bar .btn kbd { margin-left: 4px; }
+
+/* Optional columns give way in order of importance as the window narrows. */
+/* Dividers only make sense while the filters fit on one line. */
+@media (max-width: 1400px) { .filter-divider { display: none; } .findings-filters { gap: 6px 8px; } }
+@media (max-width: 1380px) {
+  .findings-table .col-decision { display: none; }
+  .findings-table .decision-inline { display: inline; }
+}
+@media (max-width: 1240px) { .findings-table .col-age { display: none; } }
+@media (max-width: 1100px) { .findings-table .col-advisory { display: none; } }
+@media (max-width: 960px) { .findings-table .col-signals { display: none; } }
+@media (max-width: 900px) {
+  .toolbar-end .btn-label { display: none; }
+  .findings-keys { display: none; }
+}
+@media (max-width: 640px) {
+  .findings-toolbar .search-field { flex-basis: 100%; max-width: none; }
+  .findings-toolbar .select { flex: 1 1 140px; width: auto; }
+  .toolbar-end { margin-left: 0; }
+  .filter-divider { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bulk-bar { animation: none; }
+}

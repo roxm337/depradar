@@ -3,20 +3,31 @@
 import { Fragment, useState } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { dateTime, relativeTime } from "@/components/workspace/format";
+import { channelLabel, dateTime, deliveryKindLabel, deliveryStatusLabel, projectName, relativeTime } from "@/components/workspace/format";
+import { Pagination } from "@/components/workspace/pagination";
 import { Empty, PageHead, Segmented, Sheet, SkeletonRows, Switch } from "@/components/workspace/ui";
-import type { DeliveryAttempt, NotificationPolicy } from "@/lib/api";
+import type { Delivery, DeliveryAttempt, NotificationPolicy } from "@/lib/api";
 
 const hours = Array.from({ length: 24 }, (_, hour) => hour);
 const zones = ["UTC", "Europe/Paris", "Europe/London", "Africa/Casablanca", "America/New_York", "America/Los_Angeles", "Asia/Dubai", "Asia/Singapore"];
 const statusTone: Record<string, string> = { accepted: "dot-ok", failed: "dot-bad", cancelled: "", bundled: "", queued: "dot-warn dot-live", sending: "dot-warn dot-live", digest_pending: "dot-warn" };
 const pad = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
+type LogFilter = "all" | "failed" | "pending";
+const PENDING = new Set(["queued", "sending", "digest_pending"]);
+const matches = (filter: LogFilter, delivery: Delivery) => filter === "all" || (filter === "failed" ? delivery.status === "failed" : PENDING.has(delivery.status));
 
 export default function NotificationsPage() {
   const workspace = useWorkspace();
-  const { connectors, deliveries, policy, now, ready, actions } = workspace;
+  const { connectors, deliveries, policy, projects, now, ready, actions } = workspace;
   const [attempts, setAttempts] = useState<Record<string, DeliveryAttempt[]>>({});
-  const [limit, setLimit] = useState(25);
+  const [filter, setFilter] = useState<LogFilter>("all");
+  const [page, setPage] = useState({ filter: "all" as LogFilter, value: 1 });
+  const [pageSize, setPageSize] = useState(25);
+  const current = page.filter === filter ? page.value : 1;
+  const shown = deliveries.filter((delivery) => matches(filter, delivery));
+  const rows = shown.slice((current - 1) * pageSize, current * pageSize);
+  const failed = deliveries.filter((delivery) => delivery.status === "failed").length;
+  const pending = deliveries.filter((delivery) => PENDING.has(delivery.status)).length;
   async function toggleAttempts(id: string) {
     if (attempts[id]) { setAttempts((current) => { const next = { ...current }; delete next[id]; return next; }); return; }
     try { const rows = await actions.loadAttempts(id); setAttempts((current) => ({ ...current, [id]: rows })); }
@@ -25,7 +36,7 @@ export default function NotificationsPage() {
 
   return (
     <>
-      <PageHead eyebrow="Configure" title="Notifications" lede="Where alerts go, when they are sent, and what happened to each delivery. Provider acceptance is recorded; inbox delivery cannot be confirmed."/>
+      <PageHead title="Notifications" lede="Where alerts go, when they are sent, and what happened to each delivery. Provider acceptance is recorded; inbox delivery cannot be confirmed."/>
       <div className="notif-grid">
         <Sheet title="Channels" meta="Verified destinations only">
           {(["email", "telegram"] as const).map((channel) => {
@@ -37,7 +48,7 @@ export default function NotificationsPage() {
                 <span className="channel-mark"><Icon name={channel === "email" ? "mail" : "send"} size={18}/></span>
                 <div className="channel-copy">
                   <b>{channel === "email" ? "Email" : "Telegram"}<span className={`tag ${verified ? (connector?.enabled ? "tag-ok" : "tag-warn") : ""}`}>{verified ? (connector?.enabled ? "Active" : "Paused") : "Not connected"}</span></b>
-                  <small>{verified ? `${destination} · verified ${relativeTime(now, connector?.verified_at)}` : connector ? (channel === "email" ? `Verification pending${destination ? ` for ${destination}` : ""} · check the delivery log` : "Pairing not finished") : "Connect a destination to receive alerts"}</small>
+                  {verified ? <><small title={destination}>{destination}</small><small>Verified {relativeTime(now, connector?.verified_at)}</small></> : <small>{connector ? (channel === "email" ? `Verification pending${destination ? ` for ${destination}` : ""} · check the delivery log` : "Pairing not finished") : "Connect a destination to receive alerts"}</small>}
                 </div>
                 <div className="channel-actions">
                   {verified && <button className="btn btn-secondary btn-sm" onClick={() => void actions.connectorAction(channel, "test")}>Send test</button>}
@@ -51,29 +62,30 @@ export default function NotificationsPage() {
         </Sheet>
         <PolicyForm key={JSON.stringify(policy)} policy={policy} onSave={actions.savePolicy}/>
       </div>
-      <Sheet title="Delivery log" meta={`${deliveries.length} recorded`}>
+      <Sheet title="Delivery log" meta={`${deliveries.length} recorded`} actions={<Segmented label="Show deliveries" value={filter} onChange={setFilter} options={[{ value: "all", label: "All", count: deliveries.length }, { value: "failed", label: "Failed", count: failed }, { value: "pending", label: "Pending", count: pending }]}/>}>
         <div className="table-wrap">
-          <table className="table">
+          <table className="table delivery-table">
             <thead><tr><th>Message</th><th className="col-optional">Channel</th><th>Status</th><th className="col-optional">Attempts</th><th className="col-optional">Created</th><th aria-label="Actions"/></tr></thead>
             <tbody>
-              {!ready ? <SkeletonRows rows={4} columns={6}/> : deliveries.slice(0, limit).map((delivery) => (
+              {!ready ? <SkeletonRows rows={4} columns={6}/> : rows.map((delivery) => (
                 <Fragment key={delivery.id}>
                   <tr>
-                    <td><div className="cell-main"><b>{delivery.kind.replaceAll("_", " ")}</b><small>{delivery.connector_id}{delivery.last_error ? ` · ${delivery.last_error.replaceAll("_", " ")}` : ""}</small></div></td>
-                    <td className="col-optional muted">{delivery.connector_id}</td>
-                    <td><span className="status"><i className={`dot ${statusTone[delivery.status] ?? ""}`}/>{delivery.status === "accepted" ? "Accepted" : delivery.status.replaceAll("_", " ")}</span></td>
-                    <td className="col-optional mono">{delivery.attempts}</td>
-                    <td className="col-optional muted">{dateTime(delivery.created_at)}</td>
-                    <td className="right"><span className="row-actions">{delivery.attempts > 0 && <button className="btn btn-ghost btn-sm" onClick={() => void toggleAttempts(delivery.id)}>{attempts[delivery.id] ? "Hide" : "Attempts"}</button>}{delivery.status === "failed" && <button className="btn btn-secondary btn-sm" onClick={() => void actions.retryDelivery(delivery)}>Retry</button>}</span></td>
+                    <td><div className="cell-main"><b>{deliveryKindLabel(delivery.kind)}</b><small>{delivery.project_id ? projectName(projects, delivery.project_id) : delivery.kind === "digest" ? "Every project" : "Workspace"}</small>{delivery.last_error && <small className="delivery-error mono" title="Provider error code">{delivery.last_error}</small>}</div></td>
+                    <td className="col-optional"><span className="delivery-channel"><Icon name={delivery.connector_id === "email" ? "mail" : "send"} size={14}/>{channelLabel(delivery.connector_id)}</span></td>
+                    <td><span className="status"><i className={`dot ${statusTone[delivery.status] ?? ""}`}/>{deliveryStatusLabel(delivery.status)}</span></td>
+                    <td className="col-optional">{delivery.attempts > 0 ? <button className="link delivery-attempts" aria-expanded={Boolean(attempts[delivery.id])} onClick={() => void toggleAttempts(delivery.id)}>{delivery.attempts} {delivery.attempts === 1 ? "attempt" : "attempts"}<Icon name={attempts[delivery.id] ? "chevron-up" : "chevron-down"} size={13}/></button> : <span className="muted">None yet</span>}</td>
+                    <td className="col-optional muted nowrap"><time dateTime={delivery.created_at} title={dateTime(delivery.created_at)}>{relativeTime(now, delivery.created_at)}</time></td>
+                    <td className="right">{delivery.status === "failed" && <button className="btn btn-secondary btn-sm" onClick={() => void actions.retryDelivery(delivery)}><Icon name="refresh" size={13}/>Retry</button>}</td>
                   </tr>
-                  {attempts[delivery.id] && <tr><td colSpan={6}><div className="attempts">{attempts[delivery.id].map((attempt) => <div className="attempt" key={attempt.id}><i className={`dot ${attempt.status === "accepted" ? "dot-ok" : attempt.status === "failed" ? "dot-bad" : "dot-warn"}`}/><b>Attempt {attempt.attempt_number}</b>{attempt.status}<span>{dateTime(attempt.started_at)}</span>{attempt.error_code && <span className="mono">{attempt.error_code}</span>}{attempt.provider_id && <span className="mono">provider {attempt.provider_id}</span>}</div>)}</div></td></tr>}
+                  {attempts[delivery.id] && <tr className="attempts-row"><td colSpan={6}><div className="attempts">{!attempts[delivery.id].length && <span className="muted">No attempt details were recorded for this delivery.</span>}{attempts[delivery.id].map((attempt) => <div className="attempt" key={attempt.id}><i className={`dot ${attempt.status === "accepted" ? "dot-ok" : attempt.status === "failed" ? "dot-bad" : "dot-warn"}`}/><b>Attempt {attempt.attempt_number}</b>{deliveryStatusLabel(attempt.status)}<span>{dateTime(attempt.started_at)}</span>{attempt.error_code && <span className="mono">{attempt.error_code}</span>}{attempt.provider_id && <span className="mono">provider {attempt.provider_id}</span>}</div>)}</div></td></tr>}
                 </Fragment>
               ))}
             </tbody>
           </table>
-          {ready && !deliveries.length && <Empty title="No deliveries yet" text="Verification messages, alerts, digests, and tests appear here with every provider attempt."/>}
+          {ready && !deliveries.length && <Empty icon="bell" title="No deliveries yet" text="Verification messages, alerts, digests, and tests appear here with every provider attempt."/>}
+          {ready && deliveries.length > 0 && !shown.length && <Empty icon="check-circle" title={filter === "failed" ? "No failed deliveries" : "Nothing waiting to send"} text={filter === "failed" ? "Every recorded delivery reached its provider or is still being retried." : "Queued alerts and digests appear here until a provider accepts them."}/>}
         </div>
-        {deliveries.length > limit && <div className="sheet-foot"><span>Showing {limit} of {deliveries.length}</span><button className="btn btn-secondary btn-sm" onClick={() => setLimit(limit + 25)}>Show more</button></div>}
+        {ready && shown.length > 0 && <Pagination total={shown.length} page={current} pageSize={pageSize} sizes={[25, 50, 100]} noun="deliveries" onPage={(value) => setPage({ filter, value })} onPageSize={(size) => { setPageSize(size); setPage({ filter, value: 1 }); }}/>}
       </Sheet>
     </>
   );

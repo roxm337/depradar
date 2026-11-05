@@ -36,7 +36,7 @@ export default function SettingsPage() {
   }
   return (
     <>
-      <PageHead eyebrow="Configure" title="Settings" lede="Pipeline access, the health of the scanning services, and how long DepRadar keeps history."/>
+      <PageHead title="Settings" lede="Pipeline access, the health of the scanning services, and how long DepRadar keeps history."/>
       <div className="settings">
         <nav className="subnav" aria-label="Settings sections">{sections.map((item) => <button key={item.id} aria-current={section === item.id} onClick={() => choose(item.id)}><Icon name={item.icon} size={16}/>{item.label}</button>)}</nav>
         <div className="settings-panel" key={section}>
