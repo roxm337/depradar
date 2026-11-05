@@ -12,6 +12,7 @@ from depradar.application.ports import InventoryStore
 from depradar.domain.entities import (
     ApiToken,
     ChangeEvent,
+    ComponentOccurrence,
     Delivery,
     FileDeletion,
     Finding,
@@ -90,6 +91,7 @@ def purge_project(db: Session, project: Project, dashboard_url: str = "") -> Non
     db.execute(delete(FindingDecision).where(FindingDecision.finding_id.in_(finding_ids)))
     db.execute(delete(Observation).where(Observation.finding_id.in_(finding_ids)))
     db.execute(delete(Finding).where(Finding.id.in_(finding_ids)))
+    db.execute(delete(ComponentOccurrence).where(ComponentOccurrence.project_id == project.id))
     db.execute(delete(Job).where(Job.scan_id.in_(scans)))
     db.execute(delete(Scan).where(Scan.id.in_(scans)))
     # Never detach restricted tokens: a token without its project would become unrestricted.
@@ -148,6 +150,11 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
             continue
         if db.scalar(select(ChangeEvent.id).where(ChangeEvent.scan_id == scan.id).limit(1)):
             continue
+        # A failed rescan can be newer than the scan that indexed the snapshot's packages.
+        if db.scalar(
+            select(ComponentOccurrence.id).where(ComponentOccurrence.scan_id == scan.id).limit(1)
+        ):
+            continue
         db.execute(delete(Observation).where(Observation.scan_id == scan.id))
         db.execute(delete(Job).where(Job.scan_id == scan.id))
         db.delete(scan)
@@ -172,6 +179,9 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
             for s in scans
         ):
             continue
+        db.execute(
+            delete(ComponentOccurrence).where(ComponentOccurrence.inventory_id == inventory.id)
+        )
         for scan in scans:
             db.execute(delete(Observation).where(Observation.scan_id == scan.id))
             db.execute(delete(Job).where(Job.scan_id == scan.id))

@@ -417,3 +417,60 @@ class ExchangeOutput(BaseModel):
     access: Literal["monitor", "check"]
     scopes: list[str]
     identity_id: str
+
+
+class ComponentSnapshotOutput(BaseModel):
+    """A current monitored manifest: what a package search covers."""
+
+    project_id: str
+    project_name: str
+    inventory_id: str
+    filename: str
+    target_path: str
+    revision: str | None
+    uploaded_at: datetime = Field(description="When this manifest was uploaded, not deployed.")
+
+
+class ComponentIndexOutput(BaseModel):
+    """The scan whose report produced a snapshot's package list."""
+
+    scan_id: str
+    status: str
+    complete: bool = Field(description="False when the package list may be missing packages.")
+    completed_at: datetime | None
+    coverage_notes: list[str]
+
+
+class PartialSnapshotOutput(ComponentSnapshotOutput):
+    indexed_by: ComponentIndexOutput
+
+
+class ComponentCoverageOutput(BaseModel):
+    snapshots: int = Field(description="Current monitored manifests.")
+    indexed: int
+    ecosystems: list[str] = Field(description="Ecosystems listed in the indexed manifests.")
+    not_indexed: list[ComponentSnapshotOutput] = Field(
+        description="Manifests without a package list yet; recheck them to index them."
+    )
+    partial: list[PartialSnapshotOutput] = Field(
+        description="Manifests indexed by an incomplete scan; a package may be missing."
+    )
+
+
+class ComponentMatchOutput(BaseModel):
+    ecosystem: str
+    name: str = Field(description="The name as the manifest spells it.")
+    version: str = Field(description="Empty when the manifest left the package unpinned.")
+    purl: str | None
+    snapshot: ComponentSnapshotOutput
+    indexed_by: ComponentIndexOutput
+    open_findings: int
+
+
+class ComponentSearchOutput(BaseModel):
+    name: str
+    ecosystem: str | None
+    version: str | None
+    matches: list[ComponentMatchOutput]
+    truncated: bool = Field(description="More matches exist than were returned.")
+    coverage: ComponentCoverageOutput

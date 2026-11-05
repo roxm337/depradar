@@ -21,6 +21,7 @@ from depradar.application.errors import (
 from depradar.interfaces.http.routes import (
     auth,
     ci,
+    components,
     findings,
     identities,
     notifications,
@@ -88,6 +89,7 @@ for router in (
     projects.router,
     projects.owner,
     findings.router,
+    components.router,
     notifications.router,
     tokens.router,
     policies.router,
