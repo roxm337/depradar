@@ -75,7 +75,7 @@ Settings → **Trusted identities** → **Add identity** binds a repository to o
 | Field | Purpose |
 | --- | --- |
 | Provider and issuer | GitHub Actions (`https://token.actions.githubusercontent.com`; GitHub Enterprise Server uses `https://HOST/_services/token`) or GitLab (`https://gitlab.com` or your instance) |
-| Repository and repository ID | `owner/repo` or `group/project`. The numeric ID (`gh api repos/OWNER/REPO --jq .id`, or the GitLab project ID) survives renames and rejects a deleted and re-created namesake |
+| Repository and repository ID | `owner/repo` or `group/project`. The numeric ID (`gh api repos/OWNER/REPO --jq .id`, or the GitLab project ID) survives renames and rejects a deleted and re-created namesake; left empty, the first verified run's ID is pinned |
 | Workflow | Optional: the only workflow file allowed to use the identity, such as `.github/workflows/depradar.yml` or `.gitlab-ci.yml` |
 | Monitor branch | The branch whose runs may update monitored state, such as `refs/heads/main`; leave empty for checks only |
 
@@ -86,16 +86,18 @@ then decides the access:
 
 | Run | Access |
 | --- | --- |
-| The trusted workflow on the monitor branch, started by `push`, `schedule`, or `workflow_dispatch` (GitLab: `push`, `schedule`, `web`, on a protected branch) | `monitor`: monitored and check uploads |
-| Pull and merge requests (including `pull_request_target`), merge queues, other branches, and tags | `check`: check uploads only |
+| The trusted workflow on the protected monitor branch, started by `push`, `schedule`, or `workflow_dispatch` (GitLab: `push`, `schedule`, `web`) | `monitor`: monitored and check uploads |
+| Pull and merge requests (including `pull_request_target`), merge queues, other branches, tags, and branches the token reports as unprotected | `check`: check uploads only |
 | Another repository, repository ID, workflow, issuer, or audience | rejected |
 
 Uploads made with an exchanged token are labelled with the verified branch and commit, whatever
 the request says, and decisions record the run (repository, workflow, ref, event, run link). The
 audience defaults to `DEPRADAR_DASHBOARD_URL`; set `DEPRADAR_OIDC_AUDIENCE` to override it.
 Settings → Trusted identities shows the value. Removing an identity revokes its outstanding
-tokens. GitHub does not report branch protection in its tokens, so protect the monitor branch
-in the repository settings; GitLab runs must report a protected branch to monitor.
+tokens, which carry only `inventories:check` (plus `inventories:write` for monitor access) and
+`scans:read`. Protect the monitor branch: GitHub and GitLab report protection in the token
+(`ref_protected`), and runs of an unprotected branch get check access. Signing keys are cached
+per issuer, and the last keys keep working for up to a day while an issuer is unreachable.
 
 ## 3. GitHub Actions
 
@@ -234,7 +236,7 @@ status request.
 | Flag | Default | Rule |
 | --- | --- | --- |
 | `--fail-on` | `high` | Fail on findings at or above `low`, `medium`, `high`, `critical`, or `none` |
-| `--fail-on-unknown` | off | Also fail on advisories without published severity |
+| `--fail-on-unknown` | off | Fail on advisories without published severity, whatever `--fail-on` says |
 | `--no-fail-on-kev` | KEV fails | CVEs in the CISA KEV catalog fail regardless of severity |
 | `--epss-threshold` | off | Fail when a CVE's EPSS probability reaches the value (0–1) |
 | `--new-only` | off | Ignore findings already open in the monitored project |
@@ -267,7 +269,8 @@ project was not part of the decision; retire renamed or deleted manifests in the
 ### Recorded decisions
 
 The client records each gate with `POST /api/ci/decisions` (`{"scan_ids": [...], "policy": {...}}`,
-scans of one project, `scans:read`). A decision is immutable and keeps:
+scans of one project, `scans:read` plus `inventories:write` or `inventories:check`; read-only
+tokens use the unrecorded preview). A decision is immutable and keeps:
 
 - the status, counts, and every item with its reasons;
 - the requested and enforced policy, the policy versions, and the adjustments;
@@ -275,7 +278,8 @@ scans of one project, `scans:read`). A decision is immutable and keeps:
 - the cached KEV/EPSS refresh time, and the acknowledgements and accepted risks that applied;
 - who asked: the owner, a token, or a verified run with its commit.
 
-`commit` is set only for verified runs whose inputs all came from that run's commit. The
+`revision` comes from the inputs; `commit` is set only for verified runs whose inputs all came
+from that run's commit. The
 dashboard's **Decisions** page lists them. Decisions follow scan retention; each project keeps
 its most recent decision.
 
@@ -309,7 +313,7 @@ running returns 409.
 | Endpoint | Scope | Notes |
 | --- | --- | --- |
 | `POST /api/ci/uploads?project=&filename=&target_path=&revision=&mode=&create_project=` | `inventories:write`; `check` mode also accepts `inventories:check` (+ `projects:write` to create) | Raw file body; returns project, inventory, scan, and whether content was reused |
-| `POST /api/ci/decisions` | `scans:read` | Record a gate decision for one project's finished scans |
+| `POST /api/ci/decisions` | `scans:read` and `inventories:write` or `inventories:check` | Record a gate decision for one project's finished scans |
 | `GET /api/ci/decisions?project_id=&status=&limit=&offset=` | `scans:read` | Recorded decisions, newest first |
 | `GET /api/ci/decisions/{id}?format=` | `scans:read` | Decision with its evidence, or its report |
 | `GET /api/ci/evaluation` | `scans:read` | Unrecorded preview of a gate or report |
