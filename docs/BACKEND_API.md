@@ -160,8 +160,9 @@ reopening a resolved finding resets its old acknowledgement/exception.
 
 ## Deletion and retention
 
-`DELETE /api/projects/{id}` removes project inventories, scans/jobs, findings/decisions, events, and
-related deliveries. An active scan/delivery returns 409; wait for it to finish or its lease to expire.
+`DELETE /api/projects/{id}` removes project inventories, scans/jobs, findings/decisions, events,
+related deliveries, its restricted tokens, its project policy versions, trusted identities, and
+recorded gate decisions. An active scan/delivery returns 409; wait for it to finish or its lease to expire.
 File deletions are recorded transactionally and completed by the worker after commit. Global
 connector configuration is retained. Existing backup archives are independent snapshots and are
 not rewritten by project deletion.
@@ -171,6 +172,8 @@ not rewritten by project deletion.
 retention (1–3650 days). The worker runs cleanup daily; `POST /api/maintenance/retention/run`
 triggers it manually. The latest inventory and scan, active work, and event-bearing audit evidence
 are preserved. Superseded, unreferenced inventory files and older redundant scans are eligible for
-cleanup. Old terminal delivery records are pruned, while pending/in-flight work remains.
+cleanup. Old terminal delivery records are pruned, while pending/in-flight work remains. Gate
+decisions older than the scan retention are pruned, except each project's most recent decision,
+and exchanged OIDC tokens are removed a day after they expire. Central policy versions are kept.
 
 See [backup and restore procedures](BACKUPS.md) for separate archive management.

@@ -2,7 +2,9 @@
 
 DepRadar plugs into any pipeline that can run Python 3.9+. A pipeline uploads its lockfiles,
 waits for the isolated OSV scan, and receives a pass/fail decision plus SARIF, JUnit, Markdown,
-and JSON reports. Two modes keep pipelines from disturbing monitored state:
+and JSON reports. Every decision is recorded with its evidence, and owner-defined
+[central policies](#central-policies) set a minimum that pipelines can tighten but never relax.
+Two modes keep pipelines from disturbing monitored state:
 
 | Mode | Used for | Effect |
 | --- | --- | --- |
@@ -25,9 +27,15 @@ For a private-network installation, run pipelines on self-hosted runners inside 
 The client refuses plain HTTP to non-local hosts unless you pass `--allow-insecure-http`, and it
 never follows redirects (that would leak the token). Use `--ca-file` for an internal CA.
 
-## 2. Create a token
+## 2. Authenticate the pipeline
 
-Settings → **CI/CD pipelines** → **Create token**, or `POST /api/tokens` with the owner session:
+Use a [trusted identity](#trusted-identities-oidc) where the CI system issues OIDC job tokens
+(GitHub Actions, GitLab): there is no stored secret, and pull/merge request runs are limited to
+check uploads by the server. Use a token everywhere else.
+
+### Tokens
+
+Settings → **CI/CD access** → **New token**, or `POST /api/tokens` with the owner session:
 
 ```json
 {"name": "acme-shop GitHub Actions", "scopes": ["projects:read", "inventories:write", "scans:read", "findings:read"], "project_id": null, "expires_in_days": 90}
@@ -41,7 +49,8 @@ SHA-256 digest. Store it as a masked secret named `DEPRADAR_TOKEN`.
 | --- | --- |
 | `projects:read` | List and read projects and their monitored manifests |
 | `projects:write` | Create projects, including `create_project=true` on CI uploads |
-| `inventories:write` | Upload manifests and queue rechecks |
+| `inventories:write` | Upload monitored and check manifests, and queue rechecks |
+| `inventories:check` | Upload check manifests only; can never change monitored state |
 | `scans:read` | Read scans and evaluate gates and reports |
 | `findings:read` | List project findings |
 
@@ -54,6 +63,39 @@ SHA-256 digest. Store it as a masked secret named `DEPRADAR_TOKEN`.
   `DELETE /api/tokens/{id}`. Usage is recorded as `last_used_at`.
 - **Backups never contain tokens**, so a restore cannot revive a revoked token. Issue new
   tokens after restoring.
+- **Pull requests:** give pull/merge request pipelines a separate **Pull request checks** token
+  (`inventories:check`) so they cannot update monitored manifests. A secret is still visible to
+  anyone who can edit the workflow in a same-repository branch, so prefer a trusted identity,
+  which the server binds to the verified branch and event.
+
+### Trusted identities (OIDC)
+
+Settings → **Trusted identities** → **Add identity** binds a repository to one project:
+
+| Field | Purpose |
+| --- | --- |
+| Provider and issuer | GitHub Actions (`https://token.actions.githubusercontent.com`; GitHub Enterprise Server uses `https://HOST/_services/token`) or GitLab (`https://gitlab.com` or your instance) |
+| Repository and repository ID | `owner/repo` or `group/project`. The numeric ID (`gh api repos/OWNER/REPO --jq .id`, or the GitLab project ID) survives renames and rejects a deleted and re-created namesake |
+| Workflow | Optional: the only workflow file allowed to use the identity, such as `.github/workflows/depradar.yml` or `.gitlab-ci.yml` |
+| Monitor branch | The branch whose runs may update monitored state, such as `refs/heads/main`; leave empty for checks only |
+
+The pipeline sends its signed job token to `POST /api/ci/identity/exchange` and receives a
+30-minute DepRadar token bound to that project. DepRadar verifies the RS256 signature with the
+issuer's published keys (fetched only for issuers you trust), the audience, and the lifetime,
+then decides the access:
+
+| Run | Access |
+| --- | --- |
+| The trusted workflow on the monitor branch, started by `push`, `schedule`, or `workflow_dispatch` (GitLab: `push`, `schedule`, `web`, on a protected branch) | `monitor`: monitored and check uploads |
+| Pull and merge requests (including `pull_request_target`), merge queues, other branches, and tags | `check`: check uploads only |
+| Another repository, repository ID, workflow, issuer, or audience | rejected |
+
+Uploads made with an exchanged token are labelled with the verified branch and commit, whatever
+the request says, and decisions record the run (repository, workflow, ref, event, run link). The
+audience defaults to `DEPRADAR_DASHBOARD_URL`; set `DEPRADAR_OIDC_AUDIENCE` to override it.
+Settings → Trusted identities shows the value. Removing an identity revokes its outstanding
+tokens. GitHub does not report branch protection in its tokens, so protect the monitor branch
+in the repository settings; GitLab runs must report a protected branch to monitor.
 
 ## 3. GitHub Actions
 
@@ -86,13 +128,29 @@ jobs:
             tests/fixtures/*
 ```
 
+With a trusted identity, drop the token and grant the job an OIDC token instead:
+
+```yaml
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: <org>/depradar/integrations/github-action@<commit-sha>
+        with:
+          url: ${{ vars.DEPRADAR_URL }}
+          auth: oidc
+```
+
 Pin the action to a full commit SHA. The project defaults to `owner/repo`. Violations appear as
 annotations and in the job summary even without code scanning. Fork pull requests receive no
 secrets; guard the job with
 `github.event.pull_request.head.repo.full_name == github.repository`, as this repository's own
 [dependency gate](../.github/workflows/dependency-gate.yml) does. Every input is listed in
 [action.yml](../integrations/github-action/action.yml); its `result` output is `pass`, `fail`,
-or `error`. SARIF is uploaded before the gate is enforced, so failing builds still report.
+or `error`, and `decision-id` names the recorded decision. SARIF is uploaded before the gate is enforced, so failing builds still report.
 
 ## 4. GitLab CI/CD
 
@@ -106,7 +164,17 @@ include:
       extra-args: '--exclude "tests/fixtures/*"'
 ```
 
-Add `DEPRADAR_TOKEN` as a masked, protected CI/CD variable. The job runs on merge requests,
+Add `DEPRADAR_TOKEN` as a masked, protected CI/CD variable, or use a trusted identity by giving
+the included job an ID token with DepRadar's audience:
+
+```yaml
+depradar-gate:
+  id_tokens:
+    DEPRADAR_ID_TOKEN:
+      aud: "https://depradar.example.com"
+```
+
+The job runs on merge requests,
 the default branch, and tags; publishes JUnit results to the merge request widget; and keeps the
 Markdown and JSON reports as artifacts. It downloads the client from your DepRadar server over
 HTTPS and refuses redirects; set `DEPRADAR_CLIENT_SHA256` to pin it as well. Plain HTTP is
@@ -140,6 +208,8 @@ passed explicitly. `--exclude` patterns use shell globbing on repository-relativ
 | --- | --- | --- |
 | `--url` / `DEPRADAR_URL` | — | API origin or `/api/backend` URL |
 | `--token-env NAME` | `DEPRADAR_TOKEN` | Environment variable holding the token (never pass tokens as arguments) |
+| `--auth` | `auto` | `token`, `oidc`, or `auto`: the token when set, otherwise the job's OIDC identity (`id-token: write` on GitHub, `DEPRADAR_ID_TOKEN` on GitLab) |
+| `--audience` / `DEPRADAR_AUDIENCE` | from the server | OIDC audience to request |
 | `--project` / `DEPRADAR_PROJECT` | CI repository | Project name or ID |
 | `--create-project` | off | Create a missing project; it is monitored every 24 hours |
 | `--mode` | `auto` | `monitor`, `check`, or automatic |
@@ -148,7 +218,8 @@ passed explicitly. `--exclude` patterns use shell globbing on repository-relativ
 | `--sarif`, `--junit`, `--markdown`, `--json` | — | Report files |
 | `--no-summary` | off | Skip appending Markdown to `$GITHUB_STEP_SUMMARY` |
 
-`depradar-ci evaluate SCAN_ID ...` re-evaluates finished scans with different policy flags. Each
+`depradar-ci evaluate SCAN_ID ...` records a new decision for finished scans of one project,
+for example with different policy flags. Each
 scan keeps the severity, advisories, and fixes it detected, so a later rescan never rewrites an
 earlier result; owner decisions (acknowledgement, accepted risk) and cached KEV/EPSS data are
 applied as they are now.
@@ -169,6 +240,7 @@ status request.
 | `--new-only` | off | Ignore findings already open in the monitored project |
 | `--ignore-acknowledged` | off | Ignore acknowledged findings |
 | `--fail-on-incomplete` | off | Fail when coverage is partial (private registries, local packages, unpinned versions) |
+| `--require-monitored-manifests` | off | Fail unless every manifest the project monitors is part of the run |
 
 Unexpired accepted risk is always ignored and is listed as such. Failed scans and scans replaced
 by a newer upload of the same manifest are errors and never pass. Severity comes from advisory
@@ -176,11 +248,52 @@ metadata; CVSS-only advisories count as `unknown`. KEV covers the full cached ca
 cached for CVEs in open findings and in check scans from the last 7 days, refreshed daily, so
 the first check of a new CVE may not have a score yet.
 
+### Central policies
+
+**Policies** in the dashboard hold the owner's minimum for the installation and, optionally, for
+individual projects. The enforced gate is the strictest of the pipeline's request, the
+installation policy, and the project policy, rule by rule: a lower severity threshold, a lower
+EPSS threshold, and every `fail on` or `require` rule win, and `new-only` or
+`ignore-acknowledged` are honored only where the policies allow them. A project policy can only
+tighten the installation policy. Policies are versioned: each save records a new version with a
+change note, and removing a project policy records a version too.
+
+Every result lists `policy_sources` (the versions that applied, version 0 before the first
+save), `requested_policy`, the enforced `policy`, and `adjustments`, which explain each rule a
+central policy raised. The client prints the adjustments, and the Markdown report lists them.
+`require-monitored-manifests` fails the gate when a monitored, non-retired manifest of the
+project was not part of the decision; retire renamed or deleted manifests in the project view.
+
+### Recorded decisions
+
+The client records each gate with `POST /api/ci/decisions` (`{"scan_ids": [...], "policy": {...}}`,
+scans of one project, `scans:read`). A decision is immutable and keeps:
+
+- the status, counts, and every item with its reasons;
+- the requested and enforced policy, the policy versions, and the adjustments;
+- each input's manifest path, SHA-256, revision, scan status, coverage, and scanner version;
+- the cached KEV/EPSS refresh time, and the acknowledgements and accepted risks that applied;
+- who asked: the owner, a token, or a verified run with its commit.
+
+`commit` is set only for verified runs whose inputs all came from that run's commit. The
+dashboard's **Decisions** page lists them. Decisions follow scan retention; each project keeps
+its most recent decision.
+
+### Require the gate before merging
+
+A server-side decision cannot stop someone from skipping the pipeline. Make the gate a required
+check: on GitHub, add the DepRadar job to a branch ruleset's required status checks (and require
+branches to be up to date); on GitLab, enable **Pipelines must succeed** for merge requests and
+keep the template's job without `allow-failure`. Protect the monitor branch so only reviewed
+changes reach the runs that update monitored state.
+
 ## Reports
 
-Request any format for up to 50 finished scans:
-`GET /api/ci/evaluation?scan_id=…&scan_id=…&format=json|sarif|junit|markdown&fail_on=high`.
-Unknown query parameters are rejected. A scan that is still running returns 409.
+Reports for a recorded decision render from the stored result, so they always match it:
+`GET /api/ci/decisions/{id}?format=json|sarif|junit|markdown`.
+`GET /api/ci/evaluation?scan_id=…&format=…&fail_on=high` previews a gate without recording it;
+central policies apply there too. Unknown query parameters are rejected. A scan that is still
+running returns 409.
 
 - **SARIF 2.1.0** — one run per manifest with a distinct category, `security-severity`
   (critical 9.5, high 8.0, medium 5.5, low 2.0), stable `primaryLocationLineHash` fingerprints,
@@ -195,8 +308,13 @@ Unknown query parameters are rejected. A scan that is still running returns 409.
 
 | Endpoint | Scope | Notes |
 | --- | --- | --- |
-| `POST /api/ci/uploads?project=&filename=&target_path=&revision=&mode=&create_project=` | `inventories:write` (+ `projects:write` to create) | Raw file body; returns project, inventory, scan, and whether content was reused |
-| `GET /api/ci/evaluation` | `scans:read` | Gate decision or report |
+| `POST /api/ci/uploads?project=&filename=&target_path=&revision=&mode=&create_project=` | `inventories:write`; `check` mode also accepts `inventories:check` (+ `projects:write` to create) | Raw file body; returns project, inventory, scan, and whether content was reused |
+| `POST /api/ci/decisions` | `scans:read` | Record a gate decision for one project's finished scans |
+| `GET /api/ci/decisions?project_id=&status=&limit=&offset=` | `scans:read` | Recorded decisions, newest first |
+| `GET /api/ci/decisions/{id}?format=` | `scans:read` | Decision with its evidence, or its report |
+| `GET /api/ci/evaluation` | `scans:read` | Unrecorded preview of a gate or report |
+| `POST /api/ci/identity/exchange` | none (signed OIDC job token in the body) | `{"id_token": "...", "project": "optional"}` → 30-minute token, `access` `monitor` or `check` |
+| `GET /api/ci/oidc` | none | The audience to request for OIDC job tokens |
 | `GET /api/ci/client.py` | none | Client script; `X-Content-SHA256` header |
 | `GET /api/scans/{id}` | `scans:read` | Poll until `succeeded`, `partial`, `failed`, or `superseded` |
 | `GET /api/projects`, `GET /api/projects/{id}` | `projects:read` | `?name=` filters by exact name |
@@ -205,6 +323,9 @@ Unknown query parameters are rejected. A scan that is still running returns 409.
 | `POST /api/projects/{id}/inventories`, `POST /api/inventories/{id}/scans` | `inventories:write` | Dashboard-equivalent upload and recheck |
 | `POST /api/projects` | `projects:write` | |
 | `GET`/`POST /api/tokens`, `DELETE /api/tokens/{id}` | owner session | Token management |
+| `GET /api/policies`, `GET /api/policies/versions[?project_id=]` | owner session | Current policies, effective project minimums, and history |
+| `PUT /api/policies/installation`, `PUT /api/policies/projects/{id}` | owner session | `{"rules": {...}, "note": ""}` records a new version; project `rules: null` removes the override |
+| `GET`/`POST /api/identities`, `DELETE /api/identities/{id}` | owner session | Trusted identities and the OIDC audience |
 
 Send `Authorization: Bearer <token>`. Bearer requests need no CSRF token. The interactive
 OpenAPI reference is at `/docs`.
