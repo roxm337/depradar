@@ -21,13 +21,13 @@ prove deployed state.
 Captured from a demo installation with fictional client projects, real OSV-Scanner results, and
 live CISA KEV and FIRST EPSS data.
 
-![Risk overview: open findings by severity, exploitation signals, and the projects most exposed](docs/screenshots/overview.png)
+![Overview: open, critical and high, and known-exploited findings, the severity trend over 90 days, finding age, and the projects most at risk](docs/screenshots/overview.png)
 
-| Findings across every project | Finding detail with fix versions and EPSS |
+| Findings across every project | Finding detail with KEV, EPSS, and the fixed version |
 | --- | --- |
-| ![Findings table filtered by status and severity](docs/screenshots/findings.png) | ![Finding drawer with exploitability, remediation, and location](docs/screenshots/finding-detail.png) |
+| ![Findings table with status and severity filters, exploit risk, fixed versions, and decisions](docs/screenshots/findings.png) | ![Finding drawer for a known-exploited Pillow CVE with its EPSS score, fixed version, and location](docs/screenshots/finding-detail.png) |
 | **Project detail** | **Alert channels and policy** |
-| ![Project drawer with open findings, manifests, and highest-priority items](docs/screenshots/project-detail.png) | ![Notifications page with email channel, alert policy, and delivery log](docs/screenshots/notifications.png) |
+| ![Project drawer with open findings, manifests, and highest-priority items](docs/screenshots/project-detail.png) | ![Notifications page with email and Telegram channels, alert policy, and delivery log](docs/screenshots/notifications.png) |
 
 ![CI/CD access settings with scoped pipeline tokens](docs/screenshots/ci-cd-access.png)
 
