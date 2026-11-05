@@ -8,6 +8,7 @@ from typing import Literal, get_args
 
 # inventories:write uploads monitored and check manifests; inventories:check uploads check
 # manifests only, so a pull request pipeline holding it can never change monitored state.
+# components:read searches where a package is used; only AI assistant (MCP) tokens hold it.
 Scope = Literal[
     "projects:read",
     "projects:write",
@@ -15,8 +16,19 @@ Scope = Literal[
     "inventories:check",
     "scans:read",
     "findings:read",
+    "components:read",
 ]
 SCOPES: tuple[str, ...] = get_args(Scope)
+# A token works on one interface only: "api" for the REST API, "mcp" for AI assistants.
+Audience = Literal["api", "mcp"]
+AUDIENCES: tuple[str, ...] = get_args(Audience)
+# Assistants read, and may run check scans, which never change findings, alerts, or inventories.
+AUDIENCE_SCOPES: dict[str, frozenset[str]] = {
+    "api": frozenset(SCOPES) - {"components:read"},
+    "mcp": frozenset(
+        {"projects:read", "scans:read", "findings:read", "components:read", "inventories:check"}
+    ),
+}
 PREFIX = "depradar_"
 ALPHABET = string.digits + string.ascii_letters
 BODY_LENGTH = 32

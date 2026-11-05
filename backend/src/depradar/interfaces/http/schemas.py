@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from depradar.domain.gate import GatePolicy, PolicySource
 from depradar.domain.identity import Provider
 from depradar.domain.policy import PolicyRules
-from depradar.domain.tokens import Scope
+from depradar.domain.tokens import Audience, Scope
 
 
 class PasswordInput(BaseModel):
@@ -220,6 +220,8 @@ class RiskInput(BaseModel):
 class RetentionInput(BaseModel):
     scan_days: int = Field(default=30, ge=1, le=3650)
     delivery_days: int = Field(default=30, ge=1, le=3650)
+    # Omitted by older dashboards; the stored value is kept.
+    audit_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class TokenInput(BaseModel):
@@ -228,6 +230,11 @@ class TokenInput(BaseModel):
     scopes: list[Scope] = Field(min_length=1)
     project_id: UUID | None = None
     expires_in_days: int = Field(default=90, ge=1, le=365)
+    audience: Audience = Field(
+        default="api",
+        description="`api` for the REST API and pipelines, `mcp` for AI assistants. A token "
+        "works on its own interface only.",
+    )
 
 
 class TokenOutput(Row):
@@ -236,6 +243,7 @@ class TokenOutput(Row):
     display_prefix: str
     scopes: list[str]
     project_id: str | None
+    audience: str
     created_at: datetime
     expires_at: datetime
     last_used_at: datetime | None
@@ -474,3 +482,22 @@ class ComponentSearchOutput(BaseModel):
     matches: list[ComponentMatchOutput]
     truncated: bool = Field(description="More matches exist than were returned.")
     coverage: ComponentCoverageOutput
+
+
+class AuditEventOutput(Row):
+    id: str
+    created_at: datetime
+    token_id: str | None
+    token_name: str
+    client_name: str = Field(description="Reported by the assistant itself; a hint only.")
+    kind: str
+    name: str
+    project_id: str | None
+    outcome: str
+    detail: str
+    duration_ms: int
+
+
+class AssistantActivityOutput(BaseModel):
+    enabled: bool = Field(description="Whether the MCP endpoint at /api/mcp is turned on.")
+    events: list[AuditEventOutput]

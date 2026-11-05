@@ -21,7 +21,7 @@ from depradar.config import Settings
 from depradar.domain.entities import ApiToken, AuthGuard, Owner, OwnerSession, Project, utcnow
 from depradar.domain.identity import VerifiedRun
 from depradar.domain.security import DUMMY_HASH, Principal, digest, hash_password, verify_password
-from depradar.domain.tokens import DISPLAY_LENGTH, SCOPES, generate_token
+from depradar.domain.tokens import AUDIENCE_SCOPES, DISPLAY_LENGTH, SCOPES, generate_token
 
 
 def initialized(db: Session) -> bool:
@@ -116,12 +116,19 @@ def set_owner_password(factory: sessionmaker[Session], password: str, *, initial
         db.execute(delete(OwnerSession))
 
 
-def principal_for(db: Session, secret: str) -> Principal:
-    """The principal a well-formed bearer token acts as."""
+def principal_for(db: Session, secret: str, audience: str = "api") -> Principal:
+    """The principal a well-formed bearer token acts as on one interface.
+
+    A token works only where it was issued for: an assistant (MCP) token is refused by the REST
+    API, and a REST token by the MCP endpoint, so neither can be reused on the other.
+    """
     token = db.scalar(select(ApiToken).where(ApiToken.token_hash == digest(secret)))
     now = utcnow()
     if token is None or token.revoked_at is not None or token.expires_at <= now:
         raise Unauthorized("API token is invalid, expired, or revoked")
+    if token.audience != audience:
+        interface = "AI assistants (MCP)" if token.audience == "mcp" else "the REST API"
+        raise Unauthorized(f"This token is for {interface} only")
     if token.last_used_at is None or token.last_used_at < now - timedelta(minutes=1):
         token.last_used_at = now
         # Tokens are excluded from backups, so this bookkeeping needs no write barrier.
@@ -151,13 +158,23 @@ def list_tokens(db: Session) -> list[ApiToken]:
 
 
 def create_token(
-    db: Session, name: str, scopes: list[str], project_id: str | None, expires_in_days: int
+    db: Session,
+    name: str,
+    scopes: list[str],
+    project_id: str | None,
+    expires_in_days: int,
+    audience: str = "api",
 ) -> tuple[ApiToken, str]:
     """Store a new token's digest; the secret is returned once and never kept."""
     if project_id and db.get(Project, project_id) is None:
         raise NotFound("Project not found")
     if project_id and "projects:write" in scopes:
         raise Invalid("Project-restricted tokens cannot create projects")
+    allowed = AUDIENCE_SCOPES[audience]
+    if not set(scopes) <= allowed:
+        interface = "AI assistant (MCP)" if audience == "mcp" else "REST API"
+        extra = ", ".join(sorted(set(scopes) - allowed))
+        raise Invalid(f"{interface} tokens cannot hold: {extra}")
     secret = generate_token()
     token = ApiToken(
         name=name,
@@ -166,6 +183,7 @@ def create_token(
         scopes=sorted(set(scopes)),
         project_id=project_id,
         expires_at=utcnow() + timedelta(days=expires_in_days),
+        audience=audience,
     )
     db.add(token)
     db.commit()
