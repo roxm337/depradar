@@ -11,6 +11,7 @@ from depradar.application.findings import latest_scan, record_change
 from depradar.application.housekeeping import purge_project
 from depradar.application.locking import lock_writes
 from depradar.domain.entities import Finding, Inventory, Job, Project, Scan, utcnow
+from depradar.domain.gate import LEVELS
 from depradar.domain.security import Principal
 
 
@@ -121,11 +122,18 @@ def list_findings(
     status: str | None,
     limit: int,
     offset: int,
+    *,
+    min_severity: str | None = None,
+    kev_only: bool = False,
 ) -> list[Finding]:
     get_project(db, project_id, principal)
     query = select(Finding).where(Finding.project_id == project_id)
     if status:
         query = query.where(Finding.status == status)
+    if min_severity:
+        query = query.where(Finding.severity.in_(LEVELS[LEVELS.index(min_severity) :]))
+    if kev_only:
+        query = query.where(Finding.kev_known.is_(True))
     return list(
         db.scalars(
             query.order_by(Finding.first_seen_at.desc(), Finding.id).limit(limit).offset(offset)

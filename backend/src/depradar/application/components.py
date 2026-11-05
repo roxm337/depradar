@@ -15,6 +15,7 @@ from depradar.domain.entities import (
     new_id,
 )
 from depradar.domain.scanning import ScannerReport
+from depradar.domain.security import Principal
 
 MAX_MATCHES = 1000
 
@@ -68,14 +69,13 @@ def index_components(db: Session, scan: Scan, inventory: Inventory, report: Scan
     )
 
 
-def current_snapshots(db: Session) -> list[Inventory]:
+def current_snapshots(db: Session, project_id: str | None = None) -> list[Inventory]:
     """The newest monitored snapshot of every manifest path that is not retired."""
     newest: dict[tuple[str, str], Inventory] = {}
-    for inventory in db.scalars(
-        select(Inventory)
-        .where(Inventory.kind == "monitor")
-        .order_by(Inventory.created_at.desc(), Inventory.id.desc())
-    ):
+    query = select(Inventory).where(Inventory.kind == "monitor")
+    if project_id is not None:
+        query = query.where(Inventory.project_id == project_id)
+    for inventory in db.scalars(query.order_by(Inventory.created_at.desc(), Inventory.id.desc())):
         newest.setdefault((inventory.project_id, inventory.target_path), inventory)
     return [inventory for inventory in newest.values() if inventory.retired_at is None]
 
@@ -117,9 +117,12 @@ class SearchResult:
     truncated: bool
 
 
-def coverage(db: Session) -> Coverage:
-    """Which current snapshots are indexed, and by which scan."""
-    snapshots = current_snapshots(db)
+def coverage(db: Session, principal: Principal) -> Coverage:
+    """Which current snapshots are indexed, and by which scan.
+
+    A project-restricted token sees its own project only, as everywhere else.
+    """
+    snapshots = current_snapshots(db, principal.project_id)
     ids = [inventory.id for inventory in snapshots]
     writers: dict[str, str] = {}
     ecosystems: list[str] = []
@@ -161,10 +164,14 @@ def coverage(db: Session) -> Coverage:
 
 
 def search(
-    db: Session, name: str, ecosystem: str | None = None, version: str | None = None
+    db: Session,
+    principal: Principal,
+    name: str,
+    ecosystem: str | None = None,
+    version: str | None = None,
 ) -> SearchResult:
     """Where a package is used in current monitored manifests, with what qualifies the answer."""
-    covered = coverage(db)
+    covered = coverage(db, principal)
     by_inventory = {s.inventory.id: s for s in covered.snapshots if s.scan is not None}
     ecosystems = [ecosystem] if ecosystem else covered.ecosystems
     if not by_inventory or not ecosystems:

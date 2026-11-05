@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from depradar.application import components
 from depradar.domain.entities import Scan
+from depradar.domain.security import Principal
 from depradar.interfaces.http.dependencies import Db, require_session
 from depradar.interfaces.http.schemas import (
     ComponentCoverageOutput,
@@ -17,6 +18,8 @@ from depradar.interfaces.http.schemas import (
 )
 
 router = APIRouter(prefix="/api/components", dependencies=[Depends(require_session)])
+# These routes accept the owner session only, which sees every project.
+OWNER = Principal()
 
 
 def snapshot_output(snapshot: components.Snapshot) -> ComponentSnapshotOutput:
@@ -62,7 +65,7 @@ def coverage_output(coverage: components.Coverage) -> ComponentCoverageOutput:
 
 @router.get("/coverage", response_model=ComponentCoverageOutput)
 def index_coverage(db: Db) -> ComponentCoverageOutput:
-    return coverage_output(components.coverage(db))
+    return coverage_output(components.coverage(db, OWNER))
 
 
 @router.get("", response_model=ComponentSearchOutput)
@@ -73,7 +76,7 @@ def search(
     version: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
 ) -> ComponentSearchOutput:
     name = name.strip()
-    result = components.search(db, name, ecosystem, version)
+    result = components.search(db, OWNER, name, ecosystem, version)
     matches = []
     for match in result.matches:
         assert match.snapshot.scan is not None
