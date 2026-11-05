@@ -226,8 +226,11 @@ checks of current inventories. Configure severity thresholds, timezone, daily di
 privacy through `/api/notifications/policy`. Accepted risk requires a reason and future expiry;
 acknowledgement and accepted risk do not mark a finding fixed.
 
+The Packages page (`GET /api/components`) finds which projects use a package and at which version,
+across every current monitored manifest, including packages without advisories.
+
 [Backend API operations](docs/BACKEND_API.md) documents verification, delivery history/retries,
-monitoring, decisions, deletion, and retention. [Backup procedures](docs/BACKUPS.md) explains
+monitoring, package search, decisions, deletion, and retention. [Backup procedures](docs/BACKUPS.md) explains
 creating a verified archive and restoring into an empty installation.
 
 ## Coverage and lifecycle rules

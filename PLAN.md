@@ -140,7 +140,7 @@ durable notifications/retries/digests, scheduled vulnerability rechecks, acknowl
 risk acceptance, transactional project deletion, retention, and versioned backup/restore with a
 PostgreSQL restore drill. The follow-up implementation adds inventory path/revision identity, EPSS/
 KEV enrichment, CVSS/PURL presentation, quiet hours, per-project alert controls, persisted delivery
-attempts, and worker/scanner health. Phase A added migration 0004 (API tokens, check-mode inventories and scans), manifest retirement added 0005 (`inventory.retired_at`), and phase A.2 added 0006 (central policies, trusted identities, recorded gate decisions, identity token columns). Migration head: 0006. GitHub sync remains deferred.
+attempts, and worker/scanner health. Phase A added migration 0004 (API tokens, check-mode inventories and scans), manifest retirement added 0005 (`inventory.retired_at`), and phase A.2 added 0006 (central policies, trusted identities, recorded gate decisions, identity token columns), and package search added 0007 (`component_occurrence`, the package index behind the Packages page). Migration head: 0007. GitHub sync remains deferred.
 
 Latest verification, 4 November 2026 on macOS arm64: `compose.verify.yaml` ran 177 tests with no
 skips, exit code 0. It covers PostgreSQL, the real pinned OSV scanner for every accepted manifest
