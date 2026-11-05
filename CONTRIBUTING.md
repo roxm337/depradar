@@ -10,9 +10,9 @@ must pass, and the rules a change must not break.
 - **Larger changes** (features, new manifest formats, schema changes, or anything that touches
   scanning, gating, tokens, or notifications): open an issue first, so the approach is agreed
   before you write code.
-- **Scope**: [PLAN.md](PLAN.md) and [docs/SECURITY_ROADMAP.md](docs/SECURITY_ROADMAP.md) list
-  what is built and what comes next. Hosted multi-tenant service, billing, and public signup are
-  out of scope. Team accounts are planned but need a design decision before work starts.
+- **Scope**: [PLAN.md](PLAN.md) lists what is built and what comes next. Hosted multi-tenant
+  service, billing, and public signup are out of scope. Team accounts are planned but need a design
+  decision before work starts.
 - **Security vulnerabilities**: never in a public issue. Follow [SECURITY.md](SECURITY.md).
 
 ## Set up
