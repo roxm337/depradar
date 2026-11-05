@@ -120,3 +120,48 @@ def test_every_manifest_format_detects_its_known_advisory(
         for m in found["matches"]
     ), found
     assert found["coverage"]["not_indexed"] == []
+
+
+@pytest.mark.skipif(
+    not os.getenv("DEPRADAR_LIVE_SCANNER_URL"),
+    reason="Real isolated scanner service is not configured",
+)
+def test_real_osv_check_scan_through_mcp(
+    harness: Harness, project_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An assistant's check scan reaches the pinned scanner and gates on the known advisory."""
+    from fastapi.testclient import TestClient
+
+    from depradar.interfaces.http.app import app
+    from depradar.interfaces.mcp.context import RUNTIME
+
+    from .test_mcp import assistant_token, ok
+
+    harness.settings.scanner_url = os.environ["DEPRADAR_LIVE_SCANNER_URL"]
+    harness.settings.mcp_enabled = True
+    monkeypatch.setattr(RUNTIME, "settings", lambda: harness.settings)
+    monkeypatch.setattr(RUNTIME, "factory", lambda: harness.factory)
+    token = assistant_token(harness, project_id=project_id)
+    assistant = TestClient(app)
+    fixture = FIXTURES / "pnpm-lock.yaml"
+    started = ok(
+        assistant,
+        token,
+        "check_manifest",
+        project_id=project_id,
+        filename=fixture.name,
+        content=fixture.read_text(),
+    )
+    assert run_once(
+        harness.factory, harness.settings, harness.store, RemoteScanner(harness.settings)
+    )
+    scan = ok(assistant, token, "get_scan", scan_id=started["scan_id"])
+    assert scan["finished"] and scan["status"] in {"succeeded", "partial"}, scan
+    gate = ok(assistant, token, "preview_gate", scan_ids=[started["scan_id"]])
+    advisories = {
+        advisory
+        for item in gate["scans"][0]["items"]
+        for advisory in item["untrusted"]["advisory_ids"]
+    }
+    assert KNOWN_ADVISORY[fixture.name] in advisories, gate
+    assert harness.client.get(f"/api/projects/{project_id}/findings").json() == []
