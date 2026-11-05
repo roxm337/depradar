@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in DepRadar does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Found a security vulnerability? Do not report it here; use
+        [private reporting](https://github.com/roxm337/depradar/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include any error message as shown.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Upload a package-lock.json to a project
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Scanning and findings
+        - CI gate, policies, and integrations
+        - Notifications
+        - Dashboard
+        - Installer and operations (depradarctl)
+        - Backups and restore
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - depradarctl install
+        - Docker Compose (development)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The commit or version, from `sudo depradarctl status` or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Output of `sudo depradarctl doctor`, or `docker compose logs api worker scanner`.
+        Remove tokens, passwords, and client project names first.
+      render: text

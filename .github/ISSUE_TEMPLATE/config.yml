@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/roxm337/depradar/security/advisories/new
+    about: Report vulnerabilities privately. Never open a public issue for one.
+  - name: Deployment guide
+    url: https://github.com/roxm337/depradar/blob/main/docs/DEPLOYMENT.md
+    about: Installing, upgrading, backups, and depradarctl doctor.
