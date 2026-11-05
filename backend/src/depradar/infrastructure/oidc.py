@@ -7,6 +7,7 @@ token itself, so a forged token cannot make the server contact an arbitrary host
 import base64
 import binascii
 import json
+import math
 import re
 import threading
 import time
@@ -26,6 +27,8 @@ MAX_DOCUMENT_BYTES = 512 * 1024
 LEEWAY_SECONDS = 60
 KEYS_TTL_SECONDS = 600
 REFRESH_INTERVAL_SECONDS = 60
+# While an issuer is unreachable its last keys stay usable this long, so exchanges keep working.
+MAX_STALE_SECONDS = 86400
 MIN_KEY_BITS = 2048
 BASE64URL = re.compile(r"[A-Za-z0-9_-]*")
 
@@ -34,14 +37,18 @@ Fetch = Callable[[str], dict[str, Any]]
 
 
 def fetch_json(url: str) -> dict[str, Any]:
+    body = bytearray()
     try:
         with httpx.Client(timeout=10, follow_redirects=False) as client:
-            response = client.get(url, headers={"Accept": "application/json"})
-            response.raise_for_status()
-            if len(response.content) > MAX_DOCUMENT_BYTES:
-                raise IdentityRejected("The issuer's key document is too large")
-            value = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
+            with client.stream("GET", url, headers={"Accept": "application/json"}) as response:
+                response.raise_for_status()
+                # Stream with a cap so an oversized document is never held in memory.
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_DOCUMENT_BYTES:
+                        raise IdentityRejected("The issuer's key document is too large")
+        value = json.loads(body)
+    except (httpx.HTTPError, ValueError, RecursionError) as exc:
         raise IdentityRejected("Could not fetch the issuer's signing keys") from exc
     if not isinstance(value, dict):
         raise IdentityRejected("The issuer returned an unexpected key document")
@@ -58,10 +65,15 @@ def _segment(value: str) -> bytes:
         raise IdentityRejected("The identity token is malformed") from exc
 
 
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"{value} is not valid JSON")
+
+
 def _json_segment(value: str) -> dict[str, Any]:
     try:
-        decoded = json.loads(_segment(value))
-    except ValueError as exc:
+        # Python's parser accepts NaN and Infinity, which would defeat the lifetime checks.
+        decoded = json.loads(_segment(value), parse_constant=_reject_constant)
+    except (ValueError, RecursionError) as exc:  # deeply nested input exhausts the stack
         raise IdentityRejected("The identity token is malformed") from exc
     if not isinstance(decoded, dict):
         raise IdentityRejected("The identity token is malformed")
@@ -96,21 +108,31 @@ class JwksVerifier:
     def __init__(self, fetch: Fetch = fetch_json, clock: Callable[[], float] = time.time):
         self.fetch = fetch
         self.clock = clock
-        self.lock = threading.Lock()
-        # issuer -> (fetched at, keys by key ID)
-        self.cache: dict[str, tuple[float, dict[str, rsa.RSAPublicKey]]] = {}
+        self.lock = threading.Lock()  # guards the two dictionaries below, never a fetch
+        # issuer -> (keys fetched at, last fetch attempt, keys by key ID)
+        self.cache: dict[str, tuple[float, float, dict[str, rsa.RSAPublicKey]]] = {}
+        self.fetching: dict[str, threading.Lock] = {}
 
     def keys(self, issuer: str, kid: str) -> rsa.RSAPublicKey:
-        now = self.clock()
         with self.lock:
-            fetched_at, keys = self.cache.get(issuer, (0.0, {}))
-            stale = now - fetched_at > KEYS_TTL_SECONDS
-            # Unknown key IDs refetch (issuers rotate keys) at most once a minute.
-            rotated = kid not in keys and now - fetched_at > REFRESH_INTERVAL_SECONDS
-            if stale or rotated:
-                keys = rsa_keys(self.fetch(self._jwks_uri(issuer)))
-                self.cache[issuer] = (now, keys)
-            key = keys.get(kid)
+            fetching = self.fetching.setdefault(issuer, threading.Lock())
+        # One fetch per issuer at a time; other issuers never wait on a slow one.
+        with fetching:
+            now = self.clock()
+            with self.lock:
+                fetched_at, attempted_at, keys = self.cache.get(issuer, (0.0, 0.0, {}))
+            due = now - attempted_at > REFRESH_INTERVAL_SECONDS
+            # Refresh expired keys, and unknown key IDs (issuers rotate keys), once a minute.
+            if due and (now - fetched_at > KEYS_TTL_SECONDS or kid not in keys):
+                try:
+                    keys = rsa_keys(self.fetch(self._jwks_uri(issuer)))
+                    fetched_at = now
+                except IdentityRejected:
+                    if not keys or now - fetched_at > MAX_STALE_SECONDS:
+                        raise
+                with self.lock:
+                    self.cache[issuer] = (fetched_at, now, keys)
+        key = keys.get(kid)
         if key is None:
             raise IdentityRejected("The identity token was signed with an unknown key")
         return key
@@ -155,7 +177,8 @@ class JwksVerifier:
             value = claims.get(name)
             if value is None:
                 return None
-            if isinstance(value, bool) or not isinstance(value, int | float):
+            valid = isinstance(value, int | float) and not isinstance(value, bool)
+            if not valid or not math.isfinite(value):
                 raise IdentityRejected(f"The identity token has an invalid {name} claim")
             return float(value)
 

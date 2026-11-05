@@ -401,6 +401,12 @@ def authenticate(
         print(f"::add-mask::{token}", file=out)
     api.token = token
     print(f"Verified CI identity: {access} access to {project_name} for 30 minutes", file=out)
+    if access == "check" and not ci_context(env)["change_request"]:
+        print(
+            "  Monitored manifests update only from the trusted workflow on the identity's "
+            "protected monitor branch; this run is gated without changing them",
+            file=out,
+        )
     return exchanged
 
 

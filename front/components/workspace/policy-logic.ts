@@ -114,7 +114,7 @@ export function summarizeRules(rules: PolicyRules): string {
   const value = normalizeRules(rules);
   const parts: string[] = [];
   if (value.fail_on !== "none") parts.push(thresholdText(value.fail_on));
-  if (value.fail_on_unknown && value.fail_on !== "none") parts.push("unknown severity");
+  if (value.fail_on_unknown) parts.push("unknown severity");
   if (value.fail_on_kev) parts.push("KEV");
   if (value.epss_threshold !== null) parts.push(`EPSS ≥ ${value.epss_threshold}`);
   if (value.fail_on_incomplete) parts.push("complete coverage");

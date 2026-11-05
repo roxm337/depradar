@@ -34,8 +34,10 @@ class IdentityMismatch(Exception):
 
 
 def _text(value: Any) -> Any:
-    # GitHub and GitLab encode numeric identifiers inconsistently across versions.
-    return str(value) if isinstance(value, int) and not isinstance(value, bool) else value
+    # GitHub and GitLab encode numbers and flags inconsistently across versions.
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value) if isinstance(value, int) else value
 
 
 Text = Annotated[str, BeforeValidator(_text)]
@@ -54,6 +56,8 @@ class GitHubClaims(BaseModel):
     actor: Text = Field(default="", max_length=100)
     head_ref: Text = Field(default="", max_length=300)
     environment: Text | None = Field(default=None, max_length=200)
+    # "true" or "false" when GitHub reports whether the ref is protected.
+    ref_protected: Text | None = Field(default=None, max_length=10)
 
 
 class GitLabClaims(BaseModel):
@@ -148,7 +152,7 @@ def verified_run(provider: str, issuer: str, claims: dict[str, Any]) -> Verified
                 ref_type=github.ref_type,
                 sha=github.sha,
                 event=github.event_name,
-                protected=None,
+                protected=None if github.ref_protected is None else github.ref_protected == "true",
                 run_id=github.run_id,
                 run_url=f"{origin}/{github.repository}/actions/runs/{github.run_id}",
                 actor=github.actor,
@@ -204,7 +208,7 @@ def access_for(identity: TrustedIdentity, run: VerifiedRun) -> Access:
         and run.ref == identity.monitor_ref
         and run.ref_type == "branch"
         and run.event in MONITOR_EVENTS.get(run.provider, set())
-        # GitLab states whether the branch is protected; GitHub relies on branch protection.
+        # Both providers report whether the ref is protected; an unprotected branch only checks.
         and run.protected is not False
     )
     return "monitor" if monitor else "check"

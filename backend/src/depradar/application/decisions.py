@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from depradar.application import gates
-from depradar.application.errors import Invalid, NotFound
+from depradar.application.errors import Forbidden, Invalid, NotFound
 from depradar.application.locking import lock_writes
 from depradar.domain.entities import (
     Finding,
@@ -109,6 +109,9 @@ def record(
     db: Session, principal: Principal, scan_ids: list[str], requested: GatePolicy
 ) -> GateResult:
     """Evaluate one project's finished scans under central policy and store the decision."""
+    # Recording writes audit history, so read-only tokens may only preview the gate.
+    if not ({"inventories:write", "inventories:check"} & principal.scopes):
+        raise Forbidden("Recording decisions needs inventories:write or inventories:check")
     lock_writes(db)
     scans = gates.scans_for(db, principal, scan_ids)
     projects = {scan.project_id for scan in scans}
@@ -119,14 +122,11 @@ def record(
     result = gates.evaluate(db, scans, requested)
     inputs = _inputs(db, scans)
     revisions = {entry["revision"] for entry in inputs}
+    revision = next((value for value in sorted(revisions, key=str) if value), None)
     run = principal.run
-    if run is not None:
-        revision: str | None = run.revision()
-        # The run's commit describes the decision only if every input came from that commit.
-        commit = run.sha if revisions == {revision} else None
-    else:
-        revision = next((value for value in sorted(revisions, key=str) if value), None)
-        commit = None
+    # A verified commit describes the decision only if every input came from that run's commit;
+    # older scans cited by a verified run keep their own revision and no verified commit.
+    commit = run.sha if run is not None and revisions == {run.revision()} else None
     modes = {scan.mode for scan in scans}
     state = db.get(SystemState, 1)
     decision = GateDecision(

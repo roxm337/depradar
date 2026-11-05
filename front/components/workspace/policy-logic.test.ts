@@ -107,8 +107,8 @@ describe("summaries", () => {
     assert.equal(summarizeRules(DEFAULT_RULES), "No central requirements");
     assert.equal(summarizeRules(rules({ fail_on: "critical" })), "Critical only");
     assert.equal(summarizeRules(rules({ fail_on_kev: true, epss_threshold: 0.1 })), "KEV · EPSS ≥ 0.1");
-    // Unknown severity only matters with a severity threshold.
-    assert.equal(summarizeRules(rules({ fail_on_unknown: true })), "No central requirements");
+    // Unknown severity fails on its own, with or without a severity threshold.
+    assert.equal(summarizeRules(rules({ fail_on_unknown: true })), "Unknown severity");
     assert.equal(summarizeRules(rules({ allow_new_only: false, require_monitored_manifests: true })), "Every manifest · no new-only");
   });
 

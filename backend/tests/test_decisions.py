@@ -46,8 +46,9 @@ def test_decisions_record_evidence_and_render_reports_from_the_record(
     first = ci_upload(anonymous, token).json()["scan"]["id"]
     scan_all(harness, advisory("GHSA-high", "HIGH"), advisory("GHSA-low", "LOW"))
     with harness.factory.begin() as db:
-        accepted = db.scalars(select(Finding).where(Finding.advisory_ids == ["GHSA-low"])).one()
-        accepted_id = accepted.id
+        # JSON columns have no equality operator on PostgreSQL, so match in Python.
+        findings = db.scalars(select(Finding)).all()
+        accepted_id = next(row.id for row in findings if row.advisory_ids == ["GHSA-low"])
         db.get(SystemState, 1).last_intelligence_refresh_at = utcnow() - timedelta(hours=3)
     until = (utcnow() + timedelta(days=7)).isoformat()
     harness.client.post(
@@ -124,6 +125,21 @@ def test_decisions_cover_one_project_and_respect_token_restrictions(
         "/api/ci/decisions/00000000-0000-4000-8000-000000000000", headers=bearer(token)
     )
     assert unknown.status_code == 404
+
+
+def test_read_only_tokens_preview_but_never_record(
+    harness: Harness, anonymous: TestClient, project_id: str
+) -> None:
+    scan_id = ci_upload(anonymous, create_token(harness)).json()["scan"]["id"]
+    scan_all(harness)
+    reader = create_token(harness, ["projects:read", "scans:read", "findings:read"])
+    denied = decide(anonymous, reader, scan_id)
+    assert denied.status_code == 403 and "inventories" in denied.json()["detail"]
+    preview = anonymous.get(
+        "/api/ci/evaluation", params={"scan_id": scan_id}, headers=bearer(reader)
+    )
+    assert preview.status_code == 200 and preview.json()["decision_id"] is None
+    assert harness.client.get("/api/ci/decisions").json() == []
 
 
 def test_failed_scans_are_recorded_as_errors(

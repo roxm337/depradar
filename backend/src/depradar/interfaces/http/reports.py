@@ -88,7 +88,7 @@ def describe(item: GateItem) -> str:
 
 def policy_text(policy: GatePolicy) -> str:
     rules = [] if policy.fail_on == "none" else [f"{policy.fail_on} severity and above"]
-    if policy.fail_on_unknown and policy.fail_on != "none":
+    if policy.fail_on_unknown:
         rules.append("unknown severity")
     if policy.fail_on_kev:
         rules.append("CISA KEV")
