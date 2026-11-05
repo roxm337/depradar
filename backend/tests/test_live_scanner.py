@@ -109,3 +109,14 @@ def test_every_manifest_format_detects_its_known_advisory(
     findings = harness.client.get(f"/api/projects/{project_id}/findings").json()
     advisories = {advisory for finding in findings for advisory in finding["advisory_ids"]}
     assert KNOWN_ADVISORY[fixture.name] in advisories, sorted(advisories)
+    # Package search finds the affected package under the ecosystem the scanner reported.
+    known = next(f for f in findings if KNOWN_ADVISORY[fixture.name] in f["advisory_ids"])
+    found = harness.client.get(
+        "/api/components",
+        params={"name": known["package_name"], "ecosystem": known["ecosystem"]},
+    ).json()
+    assert any(
+        m["version"] == known["package_version"] and m["open_findings"] >= 1
+        for m in found["matches"]
+    ), found
+    assert found["coverage"]["not_indexed"] == []

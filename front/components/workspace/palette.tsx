@@ -49,6 +49,7 @@ export function CommandPalette({ onClose, onShortcuts }: { onClose: () => void; 
       { id: "go-overview", group: "Go to", title: "Overview", icon: "grid", keywords: "dashboard home risk", hint: ["G", "O"], run: go("/") },
       { id: "go-findings", group: "Go to", title: "Findings", icon: "shield", keywords: "vulnerabilities advisories", hint: ["G", "F"], run: go("/findings") },
       { id: "go-projects", group: "Go to", title: "Projects", icon: "box", keywords: "repositories manifests", hint: ["G", "P"], run: go("/projects") },
+      { id: "go-packages", group: "Go to", title: "Packages", icon: "layers", keywords: "dependencies components libraries where used search inventory", hint: ["G", "K"], run: go("/packages") },
       { id: "go-decisions", group: "Go to", title: "Decisions", icon: "check-circle", keywords: "gate pipeline ci pass fail audit", hint: ["G", "D"], run: go("/decisions") },
       { id: "go-policies", group: "Go to", title: "Policies", icon: "lock", keywords: "gate minimum enforcement rules", hint: ["G", "L"], run: go("/policies") },
       { id: "go-alerts", group: "Go to", title: "Notifications", icon: "bell", keywords: "alerts email telegram deliveries", hint: ["G", "N"], run: go("/notifications") },

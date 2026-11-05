@@ -100,8 +100,8 @@ Buttons: `.btn` with `.btn-primary` (one per view), `.btn-secondary`, `.btn-ghos
 ## Keyboard
 
 `⌘K` palette · `/` focus the page search (give the input `data-page-search`) · `?` help ·
-`G` then `O` `F` `P` `D` `L` `N` `S` navigate (Overview, Findings, Projects, Decisions, Policies,
-Notifications, Settings) · decision rows open with `↵` · on Findings: `J` `K` move, `↵` open, `X` select,
+`G` then `O` `F` `P` `K` `D` `L` `N` `S` navigate (Overview, Findings, Projects, Packages, Decisions,
+Policies, Notifications, Settings) · decision rows open with `↵` · on Findings: `J` `K` move, `↵` open, `X` select,
 `A` acknowledge, `Esc` clear.
 
 ## Preferences

@@ -134,6 +134,32 @@ snapshot and resumes monitoring. Uploads, including CI pipelines that no longer 
 never retire anything on their own. Responds with `target_path`, `retired_inventories`, and
 `resolved_findings`; 404 when no active monitored manifest exists at that path.
 
+## Package search
+
+`GET /api/components?name=lodash` answers which projects use a package, across the current
+monitored manifest of every project (owner session only; API tokens cannot search). Optional
+`ecosystem` (for example `npm` or `PyPI`) and `version` (exact match, as the manifest records it)
+narrow the search. Each match gives the package as the manifest spells it, its version (empty when
+unpinned), project, manifest path, revision, upload time, the scan that indexed it with its
+completeness, and the number of open findings for that package in that manifest. At most 1,000
+matches are returned; `truncated` says when there were more.
+
+Names match the way their registry compares them: PyPI per PEP 503 (`Flask_SQLAlchemy` finds
+`flask-sqlalchemy`), crates.io ignoring case and `-`/`_`, Packagist, NuGet, and Pub ignoring case.
+Other ecosystems, including npm and Go, match exactly. Version ranges are not compared.
+
+Every monitor scan that returns a report indexes every package it lists, including ones without
+advisories and unpinned ones. A failed rescan keeps the earlier list. Check-mode (pull request)
+scans, superseded scans, and retired manifests never enter the index, and only the newest
+monitored snapshot of each manifest path is searched; older snapshots keep their lists until
+retention removes them. Answers reflect the last uploaded manifest, not what is deployed.
+
+Every response carries `coverage`, also available from `GET /api/components/coverage`: how many
+current manifests are indexed, the ecosystems they list, `not_indexed` manifests (none of their
+scans has indexed them yet, for example right after upgrading) and `partial` ones (indexed by an
+incomplete scan, so a package may be missing). Recheck a manifest to index it. A package that is
+not found in those manifests is unknown, not unused.
+
 ## Service and vulnerability intelligence
 
 `GET /api/operations/health` reports database, worker heartbeat, OSV scanner probe, scan queue,

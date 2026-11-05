@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from depradar.application.components import index_components
 from depradar.application.findings import record_change
 from depradar.application.locking import lock_writes
 from depradar.application.ports import InventoryStore, Scanner, ScannerFailure
@@ -190,6 +191,7 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
     if latest is None or latest.id != inventory.id or newer_scan or inventory.retired_at:
         scan.status = "superseded"
         return
+    index_components(db, scan, inventory, response.report)
     existing = list(
         db.scalars(
             select(Finding).where(

@@ -114,6 +114,25 @@ class Scan(Base):
     results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
 
 
+class ComponentOccurrence(Base):
+    """One package in a monitored manifest snapshot, as reported by the scan that indexed it."""
+
+    __tablename__ = "component_occurrence"
+    __table_args__ = (Index("ix_component_occurrence_lookup", "ecosystem", "normalized_name"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    inventory_id: Mapped[str] = mapped_column(ForeignKey("inventory.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    # The scan whose report produced this row; its completeness qualifies the whole list.
+    scan_id: Mapped[str] = mapped_column(ForeignKey("scan.id"), index=True)
+    ecosystem: Mapped[str] = mapped_column(String(100))
+    # The name as the manifest spells it, for display; searches use the normalized form.
+    name: Mapped[str] = mapped_column(Text)
+    normalized_name: Mapped[str] = mapped_column(Text)
+    # Empty when the manifest left the package unpinned.
+    version: Mapped[str] = mapped_column(Text, default="")
+    purl: Mapped[str | None] = mapped_column(Text)
+
+
 class Job(Base):
     __tablename__ = "job"
     __table_args__ = (Index("ix_job_claim", "status", "available_at"),)

@@ -206,6 +206,88 @@ def test_populated_database_upgrades_from_0005_and_back(monkeypatch: pytest.Monk
         get_settings.cache_clear()
 
 
+def test_populated_database_upgrades_from_0006_and_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0007 adds an empty package index that matches the ORM schema and drops cleanly."""
+    from alembic import command
+    from alembic.autogenerate import compare_metadata
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+
+    from depradar.config import get_settings
+    from depradar.domain.entities import Base
+
+    schema = "migration_0007_" + uuid4().hex
+    url = os.environ["DEPRADAR_TEST_DATABASE_URL"]
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    project, inventory, scan = (str(uuid4()) for _ in range(3))
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'SET search_path TO "{schema}"'))
+            connection.commit()
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0006")
+            connection.execute(
+                text(
+                    "INSERT INTO project (id, name, description, created_at, monitoring_enabled,"
+                    " check_interval_hours, notifications_enabled)"
+                    " VALUES (:id, 'Legacy', '', now(), true, 24, true)"
+                ),
+                {"id": project},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO inventory (id, project_id, filename, target_path, sha256,"
+                    " size_bytes, created_at, kind) VALUES (:id, :project, 'package-lock.json',"
+                    " 'web/package-lock.json', :sha, 10, now(), 'monitor')"
+                ),
+                {"id": inventory, "project": project, "sha": "0" * 64},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO scan (id, inventory_id, project_id, status, complete,"
+                    " package_count, coverage_notes, created_at, mode)"
+                    " VALUES (:id, :inventory, :project, 'succeeded', true, 3, '[]', now(),"
+                    " 'monitor')"
+                ),
+                {"id": scan, "inventory": inventory, "project": project},
+            )
+            connection.commit()
+            command.upgrade(config, "head")
+            drift = [
+                change
+                for change in compare_metadata(
+                    MigrationContext.configure(connection), Base.metadata
+                )
+                if "component_occurrence" in str(change)
+            ]
+            assert drift == []
+            # Existing snapshots start unindexed; rows fill on their next scan.
+            count = "SELECT count(*) FROM component_occurrence"
+            assert connection.execute(text(count)).scalar_one() == 0
+            connection.execute(
+                text(
+                    "INSERT INTO component_occurrence (id, inventory_id, project_id, scan_id,"
+                    " ecosystem, name, normalized_name, version)"
+                    " VALUES (:id, :inventory, :project, :scan, 'npm', 'minimist', 'minimist',"
+                    " '1.2.5')"
+                ),
+                {"id": str(uuid4()), "inventory": inventory, "project": project, "scan": scan},
+            )
+            connection.commit()
+            command.downgrade(config, "0006")
+            assert "component_occurrence" not in inspect(connection).get_table_names(schema)
+            assert connection.execute(text("SELECT count(*) FROM scan")).scalar_one() == 1
+            connection.commit()
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        engine.dispose()
+        get_settings.cache_clear()
+
+
 def test_backup_restore_drill_on_postgresql(
     harness: Harness, project_id: str, tmp_path: Path
 ) -> None:
