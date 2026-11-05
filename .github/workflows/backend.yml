@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   checks:
+    name: Backend checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -68,6 +69,7 @@ jobs:
           test $? -eq 2
 
   integration:
+    name: Backend integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
