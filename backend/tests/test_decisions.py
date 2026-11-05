@@ -46,8 +46,9 @@ def test_decisions_record_evidence_and_render_reports_from_the_record(
     first = ci_upload(anonymous, token).json()["scan"]["id"]
     scan_all(harness, advisory("GHSA-high", "HIGH"), advisory("GHSA-low", "LOW"))
     with harness.factory.begin() as db:
-        accepted = db.scalars(select(Finding).where(Finding.advisory_ids == ["GHSA-low"])).one()
-        accepted_id = accepted.id
+        # JSON columns have no equality operator on PostgreSQL, so match in Python.
+        findings = db.scalars(select(Finding)).all()
+        accepted_id = next(row.id for row in findings if row.advisory_ids == ["GHSA-low"])
         db.get(SystemState, 1).last_intelligence_refresh_at = utcnow() - timedelta(hours=3)
     until = (utcnow() + timedelta(days=7)).isoformat()
     harness.client.post(
