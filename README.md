@@ -283,3 +283,12 @@ rules.
 
 See [PLAN.md](PLAN.md) for the current single-user scope and [RESEARCH.md](RESEARCH.md) for
 the original market research.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks pull requests must pass, and the rules
+a change must not break. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+DepRadar is licensed under the [Apache License 2.0](LICENSE).

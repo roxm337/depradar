@@ -16,12 +16,13 @@ The repository is split into a FastAPI backend and a Next.js interface:
 - `front/lib/`: frontend API and shared helpers.
 - `docs/`: API, operations, and backup guidance.
 - `PLAN.md` and `RESEARCH.md`: product scope, status, and market evidence.
+- `CONTRIBUTING.md` and `SECURITY.md`: the contributor workflow and private vulnerability reporting.
 
 ## Build, Test, and Development Commands
 
 Run `docker compose up --build` from the repository root to start PostgreSQL, API, worker, and scanner. Initialize the owner with `docker compose exec api depradar setup-owner`.
 
-From `backend/`, use `uv sync`, `uv run ruff check .`, and `uv run mypy src`. From `front/`, use `pnpm install`, `pnpm dev`, `pnpm lint`, or `pnpm build`. The isolated PostgreSQL/OSV verification stack is defined in root `compose.verify.yaml`.
+From `backend/`, use `uv sync`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`, and `uv run pytest -q`. From `front/`, use `pnpm install`, `pnpm dev`, `pnpm lint`, `pnpm test`, or `pnpm build`. The isolated PostgreSQL/OSV verification stack is defined in root `compose.verify.yaml`.
 
 ## Coding Style and Naming
 
@@ -31,7 +32,7 @@ Implement UI directly in code. Never use Superdesign.
 
 ## Testing Guidelines
 
-Use pytest for backend rules and PostgreSQL integration checks for jobs/outbox behavior. Name Python test files `test_*.py`. Verify frontend changes with the lint and build commands above.
+Use pytest for backend rules and PostgreSQL integration checks for jobs/outbox behavior. Name Python test files `test_*.py`. Verify frontend changes with the lint, test, and build commands above.
 
 Prioritize alias deduplication, incomplete scans, retry recovery, duplicate alerts, and fix/reopen transitions. Failed or partial scans must never resolve findings. Preserve migration compatibility and show incomplete scanner coverage clearly.
 
@@ -39,7 +40,7 @@ Check-mode (pull request) scans must never change findings, alerts, or monitored
 
 ## Commits and Pull Requests
 
-No Git history exists yet. Adopt concise imperative messages, optionally using `feat:`, `fix:`, `docs:`, or `test:` prefixes. Keep changes focused.
+Use Conventional Commits (`feat(scope):`, `fix:`, `docs:`, `test:`, `ci:`, `chore:`) with one short subject line, and keep each commit focused. `main` is protected: changes land through pull requests whose required checks pass. `CONTRIBUTING.md` is the full contributor guide.
 
 PRs should explain behavior, validation performed, relevant issues, and configuration or migration changes. Include screenshots for visible UI changes.
 
