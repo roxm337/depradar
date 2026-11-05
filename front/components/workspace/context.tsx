@@ -2,14 +2,14 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, json, setCsrfToken, UNAUTHORIZED_EVENT, type ApiToken, type Connector, type CreatedApiToken, type DecisionDetail, type DecisionSummary, type Delivery, type DeliveryAttempt, type Finding, type FindingDecision, type Identities, type IdentityInput, type Inventory, type NotificationPolicy, type OperationsHealth, type Policies, type PolicyRules, type PolicyVersion, type Project, type ReportFormat, type RetentionPolicy, type Scan, type TrustedIdentity } from "@/lib/api";
+import { api, ApiError, json, setCsrfToken, UNAUTHORIZED_EVENT, type ApiToken, type Connector, type CreatedApiToken, type DecisionDetail, type DecisionSummary, type Delivery, type DeliveryAttempt, type Finding, type FindingDecision, type Identities, type IdentityInput, type Inventory, type NotificationPolicy, type OperationsHealth, type Policies, type PolicyRules, type PolicyVersion, type Project, type ReportFormat, type RetentionPolicy, type Scan, type TokenAudience, type TrustedIdentity } from "@/lib/api";
 import { supportedInventory } from "@/components/workspace/format";
 import { defaultFilters, type FindingFilters } from "@/components/workspace/findings-logic";
 import { DEFAULT_RULES, normalizeRules, reportFile } from "@/components/workspace/policy-logic";
 
 export type Session = "checking" | "ready" | "offline";
 export type Notice = { kind: "success" | "error" | "info"; text: string } | null;
-export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
+export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token"; audience?: TokenAudience } | null;
 export type Filters = FindingFilters;
 export type EmailInput = { host: string; port: number; username: string; sender: string; recipient: string; tls_mode: string };
 export type UploadInput = { projectId: string; file: File; targetPath: string; revision: string };
@@ -66,7 +66,7 @@ function useWorkspaceState() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [policy, setPolicy] = useState<NotificationPolicy>(defaultPolicy);
-  const [retention, setRetention] = useState<RetentionPolicy>({ scan_days: 30, delivery_days: 30 });
+  const [retention, setRetention] = useState<RetentionPolicy>({ scan_days: 30, delivery_days: 30, audit_days: 90 });
   const [health, setHealth] = useState<OperationsHealth | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [decisions, setDecisions] = useState<DecisionSummary[]>([]);
@@ -287,7 +287,7 @@ function useWorkspaceState() {
     },
     loadAttempts: (id: string) => api<DeliveryAttempt[]>(`notifications/deliveries/${id}/attempts`),
     retryDelivery: (delivery: Delivery) => run(() => api(`notifications/deliveries/${delivery.id}/retry`, json("POST", {})), "Delivery queued again."),
-    createToken: async (input: { name: string; scopes: ApiToken["scopes"]; project_id: string | null; expires_in_days: number }) => {
+    createToken: async (input: { name: string; scopes: ApiToken["scopes"]; project_id: string | null; expires_in_days: number; audience: TokenAudience }) => {
       try { return await api<CreatedApiToken>("tokens", json("POST", input)); }
       catch (failure) { notify("error", message(failure, "Could not create the token.")); return null; }
     },

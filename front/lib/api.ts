@@ -103,6 +103,8 @@ export type NotificationPolicy = {
 export type RetentionPolicy = {
   scan_days: number;
   delivery_days: number;
+  /** How long the record of AI assistant calls is kept. */
+  audit_days: number;
 };
 
 export type FindingDecision = {
@@ -139,7 +141,10 @@ export type DeliveryAttempt = {
   provider_id: string | null;
 };
 
-export type TokenScope = "projects:read" | "projects:write" | "inventories:write" | "inventories:check" | "scans:read" | "findings:read";
+export type TokenScope = "projects:read" | "projects:write" | "inventories:write" | "inventories:check" | "scans:read" | "findings:read" | "components:read";
+
+/** Where a token works: `api` for the REST API and pipelines, `mcp` for AI assistants. */
+export type TokenAudience = "api" | "mcp";
 
 export type ApiToken = {
   id: string;
@@ -147,6 +152,7 @@ export type ApiToken = {
   display_prefix: string;
   scopes: TokenScope[];
   project_id: string | null;
+  audience: TokenAudience;
   created_at: string;
   expires_at: string;
   last_used_at: string | null;
@@ -154,6 +160,24 @@ export type ApiToken = {
 };
 
 export type CreatedApiToken = ApiToken & { token: string };
+
+/** One call an AI assistant made over MCP. Arguments and results are never recorded. */
+export type AssistantCall = {
+  id: string;
+  created_at: string;
+  token_id: string | null;
+  token_name: string;
+  /** Reported by the assistant itself; a hint only. */
+  client_name: string;
+  kind: string;
+  name: string;
+  project_id: string | null;
+  outcome: "ok" | "error" | "denied";
+  detail: string;
+  duration_ms: number;
+};
+
+export type AssistantActivity = { enabled: boolean; events: AssistantCall[] };
 
 // ── Central security policies ──────────────────────────────────────────────
 
