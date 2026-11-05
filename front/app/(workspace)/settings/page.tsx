@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
 import { accessLabel, formatGroups, projectName, relativeTime, shortDate, tokenState } from "@/components/workspace/format";
+import { IdentitiesSection } from "@/components/workspace/identities";
 import { CopyButton, Empty, PageHead, Sheet } from "@/components/workspace/ui";
 import type { RetentionPolicy } from "@/lib/api";
 
 const sections = [
   { id: "ci", label: "CI/CD access", icon: "branch" },
+  { id: "identities", label: "Trusted identities", icon: "lock" },
   { id: "health", label: "Service health", icon: "activity" },
   { id: "retention", label: "Data retention", icon: "clock" },
   { id: "backups", label: "Backups", icon: "server" },
@@ -19,11 +21,14 @@ type Section = (typeof sections)[number]["id"];
 export default function SettingsPage() {
   const [section, setSection] = useState<Section>("ci");
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    const read = () => {
       const hash = window.location.hash.slice(1);
       if (sections.some((item) => item.id === hash)) setSection(hash as Section);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    };
+    const timer = window.setTimeout(read, 0);
+    // Links to another section of this page change only the hash.
+    window.addEventListener("hashchange", read);
+    return () => { window.clearTimeout(timer); window.removeEventListener("hashchange", read); };
   }, []);
   function choose(id: Section) {
     setSection(id);
@@ -35,7 +40,8 @@ export default function SettingsPage() {
       <div className="settings">
         <nav className="subnav" aria-label="Settings sections">{sections.map((item) => <button key={item.id} aria-current={section === item.id} onClick={() => choose(item.id)}><Icon name={item.icon} size={16}/>{item.label}</button>)}</nav>
         <div className="settings-panel" key={section}>
-          {section === "ci" && <CiSection/>}
+          {section === "ci" && <CiSection onIdentities={() => choose("identities")}/>}
+          {section === "identities" && <IdentitiesSection/>}
           {section === "health" && <HealthSection/>}
           {section === "retention" && <RetentionSection/>}
           {section === "backups" && <BackupSection/>}
@@ -46,7 +52,7 @@ export default function SettingsPage() {
   );
 }
 
-function CiSection() {
+function CiSection({ onIdentities }: { onIdentities: () => void }) {
   const workspace = useWorkspace();
   const { tokens, projects, now, origin, actions } = workspace;
   const url = `${origin || "https://depradar.example.com"}/api/backend`;
@@ -54,7 +60,8 @@ function CiSection() {
   const shell = `curl -fsSL ${url}/ci/client.py -o depradar_ci.py\nDEPRADAR_URL=${url} python3 depradar_ci.py scan --fail-on high`;
   return (
     <>
-      <div className="section-intro"><h2>CI/CD access</h2><p>Each client pipeline gets its own scoped token. Pull and merge requests run check scans that gate the change; default-branch runs keep monitored manifests current.</p></div>
+      <div className="section-intro"><h2>CI/CD access</h2><p>Each client pipeline gets its own scoped token. Pull and merge requests run check scans that gate the change; default-branch runs keep monitored manifests current. Give pull request jobs a check-only token so they can never change monitored state.</p></div>
+      <div className="callout"><Icon name="lock" size={16}/><span>On GitHub Actions or GitLab CI, skip long-lived secrets: a <button className="link" onClick={onIdentities}>trusted identity</button> lets each job sign in with its own short-lived OIDC token, and only your trusted branch and workflow can update monitored state.</span></div>
       <Sheet title="Tokens" meta={`${tokens.filter((token) => tokenState(token, now) === "Active").length} active`} actions={<button className="btn btn-primary btn-sm" onClick={() => workspace.setModal({ kind: "token" })}><Icon name="plus" size={14}/>New token</button>}>
         <div className="table-wrap">
           <table className="table">
@@ -81,7 +88,7 @@ function CiSection() {
         <div className="sheet-body form-grid">
           <div className="field"><span className="field-label">GitHub Actions<CopyButton value={github}/></span><code className="code">{github}</code></div>
           <div className="field"><span className="field-label">GitLab, Bitbucket, Jenkins, Azure, or any shell with Python 3.9+<CopyButton value={shell}/></span><code className="code">{shell}</code></div>
-          <p className="field-hint">Accepted risk is honored until it expires; failed or replaced scans never pass. Full options, SARIF upload, and the GitLab template are in docs/CI_CD.md.</p>
+          <p className="field-hint">Central policies on the Policies page are enforced on every run: pipelines can tighten the gate but never relax it. Accepted risk is honored until it expires; failed or replaced scans never pass. Full options, SARIF upload, and the GitLab template are in docs/CI_CD.md.</p>
         </div>
       </Sheet>
     </>

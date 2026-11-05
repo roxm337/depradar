@@ -1,0 +1,38 @@
+/* Policies: how the effective gate is assembled, the installation editor, and project overrides. Tokens only. */
+.policy-page { display: grid; gap: 16px; min-width: 0; }
+.policy-flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+.policy-flow li { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 12px 28px 12px 14px; min-width: 0; }
+.policy-flow li + li { border-left: 1px solid var(--line); }
+.policy-flow li > svg:last-child { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); z-index: 1; padding: 1px; border-radius: 50%; background: var(--surface); color: var(--text-3); box-sizing: content-box; }
+.policy-flow-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: var(--radius); background: var(--surface-3); color: var(--text-2); }
+.policy-flow li.is-result .policy-flow-icon { background: var(--accent-soft); color: var(--accent-text); }
+.policy-flow-copy { display: grid; gap: 1px; min-width: 0; }
+.policy-flow-copy b { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.policy-flow-copy small { color: var(--text-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.policy-flow-copy .tag { height: 18px; font-size: 10.5px; }
+
+.policy-form { display: grid; gap: 16px; }
+.policy-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 16px; max-width: 760px; }
+.policy-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.policy-foot .field-hint { margin-right: auto; }
+
+.sheet-foot.policy-history { display: grid; gap: 12px; align-items: start; padding-top: 14px; padding-bottom: 14px; }
+.policy-history .timeline { margin: 0; padding: 0; list-style: none; }
+.policy-history .timeline-item b { display: inline-flex; align-items: center; }
+.policy-history .timeline-note { color: var(--text-2); font-style: italic; }
+.policy-history-loading { display: grid; gap: 8px; }
+
+.callout.is-quiet { background: transparent; }
+
+@media (max-width: 960px) {
+  .policy-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .policy-flow li:nth-child(3) { border-left: 0; }
+  .policy-flow li:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .policy-flow li:nth-child(2) > svg:last-child { display: none; }
+}
+@media (max-width: 720px) {
+  .policy-flow { grid-template-columns: minmax(0, 1fr); }
+  .policy-flow li + li { border-left: 0; border-top: 1px solid var(--line); }
+  .policy-flow li > svg:last-child { display: none; }
+}
+.policy-page .table td.nowrap { white-space: nowrap; }

@@ -1,0 +1,34 @@
+/* Decisions: weekly summary strip and the recorded gate decision table. Tokens only. */
+.decisions-note { margin-bottom: 16px; }
+.decisions-stats { margin-bottom: 16px; }
+.decisions-stats .stat small { font-size: 12px; min-height: 18px; }
+.decisions-stats .stat strong.is-hot { color: var(--critical); }
+
+.decisions-table .status { text-transform: none; font-weight: 550; color: var(--text); }
+.decisions-table tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.decision-project { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
+.decision-project b { overflow-wrap: anywhere; }
+.decision-project .tag { height: 18px; font-size: 11px; }
+.decisions-table td.nowrap, .decisions-table .nowrap { white-space: nowrap; }
+.toolbar .search-field kbd { position: absolute; right: 8px; pointer-events: none; }
+.toolbar .search-field input { padding-right: 32px; }
+.decision-actor span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.decision-verified { display: inline-flex; align-items: center; gap: 4px; color: var(--ok) !important; font-weight: 550; }
+.decision-enforced { height: 18px; font-size: 11px; }
+.decision-outcome { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.decision-outcome.is-hot { color: var(--critical); font-weight: 550; }
+
+/* Table footer pager (shared Pagination component). */
+.pager { flex-wrap: wrap; gap: 10px 16px; }
+.pager-size { display: inline-flex; align-items: center; gap: 8px; }
+.pager-size .select { width: auto; height: 28px; min-width: 64px; }
+.pager-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.pager-nav .num { margin-right: 6px; }
+.pager-nav .icon-btn:disabled { opacity: 0.4; pointer-events: none; }
+.decisions-older { justify-content: space-between; }
+
+@media (max-width: 720px) {
+  .pager-size { display: none; }
+  /* The mode tag drops under long project names instead of squeezing them. */
+  .decision-project .tag { order: 1; }
+}

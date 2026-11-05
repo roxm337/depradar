@@ -245,6 +245,7 @@ function TokenModal({ onClose }: { onClose: () => void }) {
         <div className="modal-body">
           <div className="secret"><small>{created.name} · expires {new Date(created.expires_at).toLocaleDateString()}</small><code>{created.token}</code><div><CopyButton value={created.token} label="Copy token"/></div></div>
           <div className="callout"><Icon name="key" size={16}/><span>Save it as a masked CI secret named <span className="inline-code">DEPRADAR_TOKEN</span>. Scopes: {created.scopes.join(", ")}.</span></div>
+          {created.scopes.includes("inventories:check") && !created.scopes.includes("inventories:write") && <div className="callout"><Icon name="lock" size={16}/><span>This token can only run check scans. Use it in pull and merge request jobs; default-branch runs that keep manifests current need a default-branch token or a trusted identity.</span></div>}
         </div>
         <div className="modal-foot"><button className="btn btn-primary" onClick={finish}><Icon name="check" size={15}/>Done</button></div>
       </Modal>
@@ -261,6 +262,7 @@ function TokenModal({ onClose }: { onClose: () => void }) {
             <div className="field"><span className="field-label">Expires after</span><select className="select" value={expiry} onChange={(event) => setExpiry(event.target.value)}>{expiries.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
           </div>
           {restrictedConflict && <div className="callout is-danger"><Icon name="warning" size={16}/>Project onboarding needs a token that covers every project. Choose “All projects” or another access level.</div>}
+          <p className="field-hint">GitHub Actions and GitLab CI can skip the secret entirely: add a trusted identity in Settings → Trusted identities and pipelines sign in with their short-lived OIDC token.</p>
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || restrictedConflict}>{busy && <span className="spinner"/>}Create token</button></div>
       </form>
