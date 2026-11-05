@@ -58,11 +58,10 @@ export function RuleEditor({ value, onChange, floor, idPrefix, autoFocus = false
         <span className="rule-group-title">Always fail on</span>
         {(["fail_on_kev", "fail_on_unknown", "fail_on_incomplete", "require_monitored_manifests"] as const).map((key) => {
           const locked = locks?.[key] ?? false;
-          const needsSeverity = key === "fail_on_unknown" && effective.fail_on === "none";
           return (
             <div className="toggle-row" key={key}>
-              <span><b>{REQUIRE_COPY[key].title}{locked && <Locked/>}</b><small>{needsSeverity ? "Choose a severity minimum first; unknown severity extends it." : REQUIRE_COPY[key].detail}</small></span>
-              <Switch checked={effective[key] && !needsSeverity} disabled={locked || needsSeverity} label={REQUIRE_COPY[key].title} onChange={(checked) => set(key, checked)}/>
+              <span><b>{REQUIRE_COPY[key].title}{locked && <Locked/>}</b><small>{REQUIRE_COPY[key].detail}</small></span>
+              <Switch checked={effective[key]} disabled={locked} label={REQUIRE_COPY[key].title} onChange={(checked) => set(key, checked)}/>
             </div>
           );
         })}

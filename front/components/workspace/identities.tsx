@@ -42,7 +42,7 @@ export function IdentitiesSection() {
               const state = identityState(row);
               return (
                 <tr key={row.id} className={row.disabled_at ? "is-disabled" : ""}>
-                  <td><div className="cell-main"><b className="mono identity-repo" title={row.repository}>{row.repository}</b><small>{providerName(row.provider)} · {row.repository_id ? <>ID <span className="mono">{row.repository_id}</span></> : "matched by name only"}{row.issuer !== DEFAULT_ISSUER[row.provider] ? <> · <span title={row.issuer}>self-hosted</span></> : ""}</small></div></td>
+                  <td><div className="cell-main"><b className="mono identity-repo" title={row.repository}>{row.repository}</b><small>{providerName(row.provider)} · {row.repository_id ? <>ID <span className="mono">{row.repository_id}</span></> : "ID pinned on first run"}{row.issuer !== DEFAULT_ISSUER[row.provider] ? <> · <span title={row.issuer}>self-hosted</span></> : ""}</small></div></td>
                   <td className="col-optional">{projectName(projects, row.project_id)}</td>
                   <td className="col-optional">{row.workflow ? <span className="mono identity-workflow" title={row.workflow}>{row.workflow}</span> : <span className="muted">Any workflow</span>}</td>
                   <td>{row.monitor_ref ? <span className="mono" title={row.monitor_ref}>{refLabel(row.monitor_ref)}</span> : <span className="tag tag-check">Checks only</span>}</td>
@@ -130,7 +130,7 @@ function IdentityDialog({ url, audience, onClose }: { url: string; audience: str
           </label>
           <label className="field"><span className="field-label">Repository ID <span>Recommended</span></span>
             <input className="input mono" value={repositoryId} onChange={(event) => setRepositoryId(event.target.value)} inputMode="numeric" placeholder="123456789" aria-invalid={Boolean(idProblem)} aria-describedby="identity-id-hint" autoComplete="off"/>
-            <span className={idProblem ? "field-error" : "field-hint"} id="identity-id-hint">{idProblem ?? (provider === "github" ? <>Run <span className="inline-code">gh api repos/OWNER/REPO --jq .id</span>. The ID survives renames and rejects a deleted and re-created repository.</> : "Shown as Project ID on the GitLab project’s overview page. It survives renames and transfers.")}</span>
+            <span className={idProblem ? "field-error" : "field-hint"} id="identity-id-hint">{idProblem ?? (provider === "github" ? <>Run <span className="inline-code">gh api repos/OWNER/REPO --jq .id</span>. The ID survives renames and rejects a deleted and re-created repository. Left empty, the first verified run’s ID is pinned.</> : "Shown as Project ID on the GitLab project’s overview page. It survives renames and transfers. Left empty, the first verified run’s ID is pinned.")}</span>
           </label>
           <label className="field"><span className="field-label">Trusted workflow <span>Optional</span></span>
             <input className="input mono" value={workflow} onChange={(event) => setWorkflow(event.target.value)} placeholder={WORKFLOW_PLACEHOLDER[provider]} autoComplete="off" spellCheck={false}/>
