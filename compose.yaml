@@ -51,6 +51,8 @@ services:
       DEPRADAR_DASHBOARD_URL: ${DEPRADAR_DASHBOARD_URL:-http://localhost:8000}
       # Audience CI jobs request for OIDC identity tokens; empty uses the dashboard URL.
       DEPRADAR_OIDC_AUDIENCE: ${DEPRADAR_OIDC_AUDIENCE:-}
+      # AI assistants (MCP) at /api/mcp, off by default; see docs/MCP.md.
+      DEPRADAR_MCP_ENABLED: ${DEPRADAR_MCP_ENABLED:-false}
     ports:
       # Override with DEPRADAR_API_PORT when another local stack already uses 8000.
       - 127.0.0.1:${DEPRADAR_API_PORT:-8000}:8000

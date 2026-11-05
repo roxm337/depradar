@@ -552,8 +552,12 @@ def save_state(state: dict[str, Any]) -> None:
     write_private(STATE_FILE, json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
+# Settings the owner turns on by editing the env file; reconfiguring keeps their value.
+OWNER_SETTINGS = {"DEPRADAR_MCP_ENABLED": "false"}
+
+
 def apply_configuration(state: dict[str, Any], secrets_in: dict[str, str]) -> None:
-    current = read_env()
+    current = read_env(ENV_FILE)
     values = {
         "POSTGRES_PASSWORD": current.get("POSTGRES_PASSWORD") or secrets.token_hex(24),
         "DEPRADAR_BOOTSTRAP_TOKEN": current.get("DEPRADAR_BOOTSTRAP_TOKEN")
@@ -565,6 +569,7 @@ def apply_configuration(state: dict[str, Any], secrets_in: dict[str, str]) -> No
             "telegram", current.get("DEPRADAR_TELEGRAM_BOT_TOKEN", "")
         ),
         "DEPRADAR_CONFIG_DIR": str(CONFIG_DIR),
+        **{key: current.get(key, default) for key, default in OWNER_SETTINGS.items()},
     }
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o750)
