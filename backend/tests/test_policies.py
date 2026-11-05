@@ -239,3 +239,18 @@ def test_required_manifests_cannot_be_skipped(
     )
     assert retired.status_code == 200, retired.text
     assert evaluate(anonymous, token, check_web).json()["status"] == "pass"
+
+
+def test_a_central_unknown_severity_rule_holds_without_a_threshold(
+    harness: Harness, anonymous: TestClient, project_id: str
+) -> None:
+    token = create_token(harness)
+    scan_id = ci_upload(anonymous, token).json()["scan"]["id"]
+    unrated = advisory("GHSA-unrated", "HIGH")
+    del unrated["database_specific"]
+    run_once(harness.factory, harness.settings, harness.store, lambda *_: scanned(unrated))
+    assert evaluate(anonymous, token, scan_id, fail_on="none").json()["status"] == "pass"
+    save(harness, {"fail_on_unknown": True})
+    result = evaluate(anonymous, token, scan_id, fail_on="none", fail_on_kev=False).json()
+    assert result["status"] == "fail" and result["policy"]["fail_on"] == "none"
+    assert result["scans"][0]["items"][0]["reasons"] == ["unknown severity"]

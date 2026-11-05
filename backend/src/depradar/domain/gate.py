@@ -149,11 +149,11 @@ def judge(candidate: Candidate, target_path: str, policy: GatePolicy, now: datet
         outcome = "ignored"
     else:
         level = LEVELS.index(severity)
-        if policy.fail_on != "none":
-            if level and level >= LEVELS.index(policy.fail_on):
-                reasons.append(f"{severity} severity")
-            elif not level and policy.fail_on_unknown:
-                reasons.append("unknown severity")
+        if level and policy.fail_on != "none" and level >= LEVELS.index(policy.fail_on):
+            reasons.append(f"{severity} severity")
+        # Independent of the threshold, so a central rule holds even when fail_on is none.
+        elif not level and policy.fail_on_unknown:
+            reasons.append("unknown severity")
         if policy.fail_on_kev and candidate.kev_known:
             reasons.append("listed in CISA KEV")
         if (
