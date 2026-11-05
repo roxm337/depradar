@@ -38,3 +38,6 @@ jobs:
             backend/examples/*
             backend/tests/*
           fail-on: high
+          # The server uses Caddy's private certificate authority (tls-internal mode). Remove this
+          # line if the server moves to a publicly trusted certificate.
+          ca-file: .github/depradar-root.crt
