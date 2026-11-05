@@ -401,3 +401,54 @@ export const json = (method: string, value: unknown): RequestInit => ({
   method,
   body: JSON.stringify(value),
 });
+
+/** A current monitored manifest, as package search covers it. */
+export type ComponentSnapshot = {
+  project_id: string;
+  project_name: string;
+  inventory_id: string;
+  filename: string;
+  target_path: string;
+  revision: string | null;
+  /** When the manifest was uploaded, not when it was deployed. */
+  uploaded_at: string;
+};
+
+/** The scan whose report produced a manifest's package list. */
+export type ComponentIndex = {
+  scan_id: string;
+  status: string;
+  complete: boolean;
+  completed_at: string | null;
+  coverage_notes: string[];
+};
+
+export type ComponentCoverage = {
+  snapshots: number;
+  indexed: number;
+  ecosystems: string[];
+  /** Manifests without a package list yet; a recheck indexes them. */
+  not_indexed: ComponentSnapshot[];
+  /** Manifests indexed by an incomplete scan; a package may be missing from them. */
+  partial: Array<ComponentSnapshot & { indexed_by: ComponentIndex }>;
+};
+
+export type ComponentMatch = {
+  ecosystem: string;
+  name: string;
+  /** Empty when the manifest left the package unpinned. */
+  version: string;
+  purl: string | null;
+  snapshot: ComponentSnapshot;
+  indexed_by: ComponentIndex;
+  open_findings: number;
+};
+
+export type ComponentSearch = {
+  name: string;
+  ecosystem: string | null;
+  version: string | null;
+  matches: ComponentMatch[];
+  truncated: boolean;
+  coverage: ComponentCoverage;
+};

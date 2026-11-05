@@ -12,7 +12,7 @@ import { CommandPalette } from "@/components/workspace/palette";
 import { Kbd, Menu, MenuItem, Modal } from "@/components/workspace/ui";
 
 const navigation = [
-  { group: "Monitor", items: [{ href: "/", label: "Overview", icon: "grid", key: "o" }, { href: "/findings", label: "Findings", icon: "shield", key: "f" }, { href: "/projects", label: "Projects", icon: "box", key: "p" }, { href: "/decisions", label: "Decisions", icon: "check-circle", key: "d" }] },
+  { group: "Monitor", items: [{ href: "/", label: "Overview", icon: "grid", key: "o" }, { href: "/findings", label: "Findings", icon: "shield", key: "f" }, { href: "/projects", label: "Projects", icon: "box", key: "p" }, { href: "/packages", label: "Packages", icon: "layers", key: "k" }, { href: "/decisions", label: "Decisions", icon: "check-circle", key: "d" }] },
   { group: "Configure", items: [{ href: "/policies", label: "Policies", icon: "lock", key: "l" }, { href: "/notifications", label: "Notifications", icon: "bell", key: "n" }, { href: "/settings", label: "Settings", icon: "settings", key: "s" }] },
 ];
 const pages = navigation.flatMap((section) => section.items);
@@ -23,6 +23,7 @@ const shortcuts: Array<{ label: string; keys: string[] }> = [
   { label: "Go to Overview", keys: ["G", "O"] },
   { label: "Go to Findings", keys: ["G", "F"] },
   { label: "Go to Projects", keys: ["G", "P"] },
+  { label: "Go to Packages", keys: ["G", "K"] },
   { label: "Go to Decisions", keys: ["G", "D"] },
   { label: "Go to Policies", keys: ["G", "L"] },
   { label: "Go to Notifications", keys: ["G", "N"] },

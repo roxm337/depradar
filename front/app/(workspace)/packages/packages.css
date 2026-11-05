@@ -1,0 +1,25 @@
+/* Packages: search where a package is used across current monitored manifests. Tokens only. */
+.packages-form { flex-wrap: wrap; }
+.packages-form .search-field kbd { position: absolute; right: 8px; pointer-events: none; }
+.packages-form .search-field input { padding-right: 32px; }
+.packages-form .search-field input::-webkit-search-cancel-button { display: none; }
+.packages-form .packages-version { width: 150px; flex: none; }
+.packages-note { margin-bottom: 12px; }
+.packages-note.is-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--text); }
+.packages-note.is-warn svg { color: var(--warn); }
+.packages-note p { margin: 0; }
+
+.packages-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 12px; font-size: 12.5px; color: var(--text-2); }
+.packages-summary strong { color: var(--text); font-weight: 600; }
+.packages-versions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.packages-table .package-name { font-family: var(--data); font-size: 12.5px; overflow-wrap: anywhere; }
+.packages-table .package-version { font-family: var(--data); font-size: 12.5px; white-space: nowrap; }
+.packages-table .package-path { font-family: var(--data); overflow-wrap: anywhere; }
+.packages-table .cell-main b { overflow-wrap: anywhere; }
+.packages-table .nowrap { white-space: nowrap; }
+.packages-table tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.packages-pending { margin-bottom: 12px; }
+.packages-pending .table td { vertical-align: middle; }
+.packages-pending .right { text-align: right; }
