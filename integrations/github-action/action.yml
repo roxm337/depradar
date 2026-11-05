@@ -9,8 +9,11 @@ inputs:
     description: DepRadar URL — the API origin, or the web interface URL ending in /api/backend.
     required: true
   token:
-    description: DepRadar API token from Settings → CI/CD tokens. Pass it from a secret.
-    required: true
+    description: DepRadar API token from Settings → CI/CD access, passed from a secret. Leave empty to authenticate with the job's OIDC identity instead, which needs the id-token write permission and a trusted identity in DepRadar.
+    default: ""
+  auth:
+    description: auto, token, or oidc. auto uses the token when one is given, otherwise the job's OIDC identity.
+    default: auto
   project:
     description: DepRadar project name or ID.
     default: ${{ github.repository }}
@@ -47,6 +50,9 @@ inputs:
   fail-on-incomplete:
     description: Fail when scanner coverage is partial, such as private registries or unpinned versions.
     default: "false"
+  require-monitored-manifests:
+    description: Fail unless every manifest the DepRadar project monitors is part of this run.
+    default: "false"
   sarif-file:
     description: Where to write the SARIF report.
     default: depradar.sarif
@@ -67,6 +73,9 @@ outputs:
   result:
     description: pass, fail, or error.
     value: ${{ steps.gate.outputs.result }}
+  decision-id:
+    description: ID of the gate decision recorded in DepRadar.
+    value: ${{ steps.gate.outputs.decision-id }}
   sarif-file:
     description: Path of the SARIF report.
     value: ${{ steps.gate.outputs.sarif-file }}
@@ -81,6 +90,7 @@ runs:
       env:
         DEPRADAR_URL: ${{ inputs.url }}
         DEPRADAR_TOKEN: ${{ inputs.token }}
+        INPUT_AUTH: ${{ inputs.auth }}
         INPUT_PROJECT: ${{ inputs.project }}
         INPUT_CREATE_PROJECT: ${{ inputs.create-project }}
         INPUT_PATHS: ${{ inputs.paths }}
@@ -93,6 +103,7 @@ runs:
         INPUT_NEW_ONLY: ${{ inputs.new-only }}
         INPUT_IGNORE_ACKNOWLEDGED: ${{ inputs.ignore-acknowledged }}
         INPUT_FAIL_ON_INCOMPLETE: ${{ inputs.fail-on-incomplete }}
+        INPUT_REQUIRE_MONITORED_MANIFESTS: ${{ inputs.require-monitored-manifests }}
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
         INPUT_CA_FILE: ${{ inputs.ca-file }}
