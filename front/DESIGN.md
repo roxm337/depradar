@@ -60,10 +60,22 @@ Buttons: `.btn` with `.btn-primary` (one per view), `.btn-secondary`, `.btn-ghos
 ## Patterns
 
 - **Page**: `PageHead` (title, one-line description, actions) then content. No eyebrow labels.
-- **Filters**: a toolbar above the table: search, filters, then a right-aligned count and menus.
-  Active filters are visible and clearable.
+- **Filters**: two toolbar rows above the table. The first narrows the scope (search, project,
+  decision) and ends with the page's menus (views, columns, export); the second filters by state
+  (status, severity chips, toggles) and ends with the result count. Active filters and a non-default
+  sort are visible as chips and clearable.
 - **Tables**: sticky header, sortable columns declare `aria-sort`, selection column on the left,
-  paginate instead of rendering unbounded rows, advisory IDs and versions never wrap.
+  paginate with the shared `Pagination` footer instead of rendering unbounded rows, advisory IDs and
+  versions never wrap. A table must fit its sheet at every width: long names wrap
+  (`overflow-wrap: anywhere`) and optional columns hide in priority order as the window narrows; a
+  hidden column's essential fact moves into the row's subline.
+- **Bulk actions**: selecting rows raises a floating bar at the bottom of the table with the count,
+  the actions that apply (disabled ones say why in a title), and Clear with `Esc`.
+- **Labels**: show people what was sent or what happened ("Daily digest delivered", "CI check
+  completed"), never internal identifiers. Machine error codes stay verbatim in monospace. Write
+  labels in sentence case in the source; CSS capitalization is only for single-word values such
+  as severities, where it cannot produce Title Case.
+- **Disabled controls** stay hoverable so their title can explain why they are unavailable.
 - **Destructive actions** confirm in a `Modal` and say what is kept and what is removed.
 - **Feedback**: toasts for outcomes, banners for standing conditions, inline messages next to the
   field that caused them.

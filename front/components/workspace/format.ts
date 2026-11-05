@@ -191,3 +191,29 @@ export function tokenState(token: ApiToken, now: number) {
 export function bytes(size: number) {
   return size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
+
+// People read deliveries by what was sent and what happened, not by internal identifiers.
+const DELIVERY_KIND: Record<string, string> = { alert: "Vulnerability alert", digest: "Daily digest", summary: "Backlog summary", backlog: "Backlog summary", test: "Test message", verification: "Verification code" };
+const DELIVERY_STATUS: Record<string, string> = { accepted: "Accepted", failed: "Failed", cancelled: "Cancelled", bundled: "In a digest", queued: "Queued", sending: "Sending", digest_pending: "Waiting for digest" };
+const CHANNEL: Record<string, string> = { email: "Email", telegram: "Telegram" };
+
+export function sentenceCase(value: string) {
+  const text = value.replaceAll("_", " ").trim();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+export const deliveryKindLabel = (kind: string) => DELIVERY_KIND[kind] ?? sentenceCase(kind);
+export const deliveryStatusLabel = (status: string) => DELIVERY_STATUS[status] ?? sentenceCase(status);
+export const channelLabel = (id: string) => CHANNEL[id] ?? sentenceCase(id);
+
+/** "Daily digest delivered", "Test message queued": one line for an activity feed. */
+export function deliveryEvent(kind: string, status: string) {
+  return `${deliveryKindLabel(kind)} ${status === "accepted" ? "delivered" : deliveryStatusLabel(status).toLowerCase()}`;
+}
+
+/** "CI check completed", "Scan failed": the scan's outcome as an activity line. */
+export function scanEvent(scan: Scan) {
+  const subject = scan.mode === "check" ? "CI check" : "Scan";
+  if (scan.status === "running") return `${subject} in progress`;
+  return `${subject} ${scanLabel(scan).toLowerCase()}`;
+}

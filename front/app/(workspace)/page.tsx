@@ -6,7 +6,7 @@ import "./overview.css";
 import { Icon } from "@/components/icon";
 import { AgeBars, TrendChart, WINDOWS } from "@/components/workspace/charts";
 import { useWorkspace } from "@/components/workspace/context";
-import { byPriority, countBySeverity, coverageLabel, projectCoverage, relativeTime, scanLabel, scanTone, severityRank, workspaceCoverage } from "@/components/workspace/format";
+import { byPriority, channelLabel, countBySeverity, coverageLabel, deliveryEvent, projectCoverage, relativeTime, scanEvent, scanLabel, scanTone, severityRank, workspaceCoverage } from "@/components/workspace/format";
 import { ageBuckets, change, DAY, medianResolveDays, openSeries, pastTarget, TARGET_DAYS, urgent } from "@/components/workspace/trend";
 import { Empty, PageHead, Pkg, Segmented, Sev, Sheet, SkeletonRows, StackBar } from "@/components/workspace/ui";
 
@@ -48,8 +48,8 @@ export default function OverviewPage() {
   const needsReview = exposure.filter((entry) => ["incomplete", "unscanned"].includes(entry.state.state)).length;
   const checks = scans.filter((scan) => scan.mode === "check" && now && now - Date.parse(scan.created_at) < 7 * DAY).length;
   const activity = [
-    ...scans.slice(0, 8).map((scan) => ({ id: scan.id, at: scan.created_at, tone: scanTone(scan), title: `${scanLabel(scan)}${scan.mode === "check" ? " · CI check" : ""}`, detail: `${names.get(scan.project_id) ?? "Project"} · ${plural(scan.package_count, "package")}` })),
-    ...deliveries.slice(0, 5).map((delivery) => ({ id: delivery.id, at: delivery.created_at, tone: delivery.status === "failed" ? "dot-bad" : delivery.status === "accepted" ? "dot-ok" : "dot-warn", title: `${delivery.kind.replaceAll("_", " ")} ${delivery.status === "accepted" ? "delivered" : delivery.status.replaceAll("_", " ")}`, detail: `${delivery.connector_id}${delivery.last_error ? ` · ${delivery.last_error}` : ""}` })),
+    ...scans.slice(0, 8).map((scan) => ({ id: scan.id, at: scan.created_at, tone: scanTone(scan), title: scanEvent(scan), detail: `${names.get(scan.project_id) ?? "Project"} · ${plural(scan.package_count, "package")}` })),
+    ...deliveries.slice(0, 5).map((delivery) => ({ id: delivery.id, at: delivery.created_at, tone: delivery.status === "failed" ? "dot-bad" : delivery.status === "accepted" ? "dot-ok" : "dot-warn", title: deliveryEvent(delivery.kind, delivery.status), detail: `${channelLabel(delivery.connector_id)}${delivery.last_error ? ` · ${delivery.last_error}` : ""}` })),
     ...tokens.slice(0, 3).map((token) => ({ id: token.id, at: token.revoked_at ?? token.created_at, tone: token.revoked_at ? "" : "dot-ok", title: `CI/CD token ${token.revoked_at ? "revoked" : "created"}`, detail: token.name })),
   ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 7);
   const lede = !projects.length
@@ -121,8 +121,8 @@ export default function OverviewPage() {
           </Sheet>
         </div>
 
-        <div className="overview-grid is-even">
-          <Sheet title="Needs attention" meta="Ranked by severity, exploitation, and age" actions={<Link className="btn btn-ghost btn-sm" href="/findings">All findings<Icon name="arrow" size={14}/></Link>}>
+        <div className="overview-grid is-even is-stretch">
+          <Sheet className="is-fill" foot={open.length > 8 ? <><span>Showing 8 of {open.length} open</span><Link className="link foot-end" href="/findings">Open findings<Icon name="arrow" size={13}/></Link></> : undefined} title="Needs attention" meta="Ranked by severity, exploitation, and age" actions={<Link className="btn btn-ghost btn-sm" href="/findings">All findings<Icon name="arrow" size={14}/></Link>}>
             <div className="table-wrap">
               <table className="table attention">
                 <thead><tr><th scope="col">Severity</th><th scope="col">Package</th><th scope="col" className="col-optional">Project</th><th scope="col" className="col-optional">Age</th><th scope="col">Fix</th></tr></thead>
@@ -141,7 +141,7 @@ export default function OverviewPage() {
               {loaded && !open.length && <Empty icon="check-circle" title={coverage === "verified" ? "Nothing needs attention" : "No known open findings"} text={coverage === "verified" ? "Every monitored manifest is clear as of its latest complete scan. DepRadar keeps rechecking as advisories are published." : "Some manifests are not confirmed clear yet. Open Projects to see which scans need attention."}/>}
             </div>
           </Sheet>
-          <Sheet title="Projects by risk" actions={<Link className="btn btn-ghost btn-sm" href="/projects">All projects<Icon name="arrow" size={14}/></Link>}>
+          <Sheet className="is-fill" title="Projects by risk" actions={<Link className="btn btn-ghost btn-sm" href="/projects">All projects<Icon name="arrow" size={14}/></Link>}>
             <div className="risk-list">
               {exposure.slice(0, 6).map(({ project, rows, counts: projectCounts, state }) => (
                 <button key={project.id} className="risk-row" onClick={() => workspace.setProjectId(project.id)}>

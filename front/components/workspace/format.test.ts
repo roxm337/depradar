@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Inventory, Project, Scan } from "../../lib/api.ts";
-import { latestPerTarget, projectCoverage, retiredTargets, workspaceCoverage } from "./format.ts";
+import { channelLabel, deliveryEvent, latestPerTarget, projectCoverage, retiredTargets, scanEvent, sentenceCase, workspaceCoverage } from "./format.ts";
 
 const P = "project-1";
 
@@ -128,5 +128,24 @@ describe("workspaceCoverage", () => {
     const other = inventory("o", "go.mod", "2026-11-01T10:00:00Z", { project_id: "project-2" });
     const failed = scan("f", "o", "2026-11-01T11:00:00Z", { project_id: "project-2", status: "failed", complete: false });
     assert.equal(workspaceCoverage([project(P), project("project-2")], [verifiedInventory, other], [verifiedScan, failed]), "incomplete");
+  });
+});
+
+describe("activity labels", () => {
+  test("deliveries read as what was sent and what happened", () => {
+    assert.equal(deliveryEvent("digest", "accepted"), "Daily digest delivered");
+    assert.equal(deliveryEvent("test", "queued"), "Test message queued");
+    assert.equal(deliveryEvent("alert", "digest_pending"), "Vulnerability alert waiting for digest");
+    assert.equal(deliveryEvent("new_kind", "failed"), "New kind failed");
+    assert.equal(channelLabel("telegram"), "Telegram");
+    assert.equal(sentenceCase("smtp_timeout"), "Smtp timeout");
+  });
+
+  test("scans read as their outcome, naming CI checks", () => {
+    const base = { id: "s", inventory_id: "i", project_id: "p", complete: true, engine_version: null, error: null, package_count: 1, coverage_notes: [], created_at: "2026-11-01T00:00:00Z", completed_at: null };
+    assert.equal(scanEvent({ ...base, status: "succeeded", mode: "monitor" }), "Scan completed");
+    assert.equal(scanEvent({ ...base, status: "succeeded", mode: "check" }), "CI check completed");
+    assert.equal(scanEvent({ ...base, status: "succeeded", complete: false, mode: "monitor" }), "Scan completed with coverage gaps");
+    assert.equal(scanEvent({ ...base, status: "running", mode: "check" }), "CI check in progress");
   });
 });
