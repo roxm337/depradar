@@ -6,8 +6,15 @@ import string
 import zlib
 from typing import Literal, get_args
 
+# inventories:write uploads monitored and check manifests; inventories:check uploads check
+# manifests only, so a pull request pipeline holding it can never change monitored state.
 Scope = Literal[
-    "projects:read", "projects:write", "inventories:write", "scans:read", "findings:read"
+    "projects:read",
+    "projects:write",
+    "inventories:write",
+    "inventories:check",
+    "scans:read",
+    "findings:read",
 ]
 SCOPES: tuple[str, ...] = get_args(Scope)
 PREFIX = "depradar_"

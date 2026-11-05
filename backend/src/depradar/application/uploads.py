@@ -136,6 +136,8 @@ def upload_inventory(
     revision: str | None,
     content: bytes,
 ) -> tuple[Inventory, Scan]:
+    if principal.run is not None:
+        revision = principal.run.revision()  # verified runs never choose their own label
     lock_writes(db)
     # Re-read under the barrier: the project may have been deleted during the upload.
     project = get_project(db, project_id, principal)
@@ -154,6 +156,19 @@ def recheck(db: Session, principal: Principal, inventory_id: str) -> Scan:
     scan = queue_scan(db, inventory)
     db.commit()
     return scan
+
+
+def require_upload(principal: Principal, mode: str) -> None:
+    """Monitored uploads need inventories:write; check uploads also accept inventories:check."""
+    if not principal.can_upload(mode):
+        needed = "inventories:write" if mode == "monitor" else "inventories:write or :check"
+        detail = f"API token lacks required scope for {mode} uploads: {needed}"
+        if principal.run is not None and mode == "monitor":
+            detail = (
+                "This run may only upload check manifests: monitored state changes only from "
+                "the trusted workflow on the identity's monitor branch"
+            )
+        raise Forbidden(detail)
 
 
 def require_project_creation(principal: Principal) -> None:
@@ -203,7 +218,12 @@ def pipeline_upload(
     content: bytes,
     mode: str,
 ) -> tuple[Project, bool, Inventory, Scan, bool]:
-    """Returns (project, project created, inventory, scan, inventory reused)."""
+    """Returns (project, project created, inventory, scan, inventory reused).
+
+    A verified run's revision comes from its signed claims, never from the request.
+    """
+    if principal.run is not None:
+        revision = principal.run.revision()
     lock_writes(db)
     project, created = resolve_project(db, principal, reference, create)
     inventory, scan, reused = store_inventory(

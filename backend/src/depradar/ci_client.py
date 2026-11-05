@@ -8,8 +8,14 @@ copy that matches your server from GET /api/ci/client.py, or use the bundled Git
     export DEPRADAR_TOKEN=...                            # store as a masked CI secret
     python3 depradar_ci.py scan --fail-on high --sarif depradar.sarif
 
+Without DEPRADAR_TOKEN, the client authenticates with the CI job's OIDC identity when available
+(GitHub Actions with `id-token: write`, or GitLab `id_tokens: DEPRADAR_ID_TOKEN`), for a
+repository the owner trusts in DepRadar. No long-lived secret is needed.
+
 Pull/merge request pipelines run in check mode: results gate the change without touching the
 monitored project. Default-branch pipelines run in monitor mode and keep inventories current.
+Central DepRadar policies may tighten the requested gate; they are never relaxed. Every gate is
+recorded as a decision in DepRadar.
 Exit codes: 0 gate passed, 1 policy violation, 2 error (scan failure, timeout, auth, config).
 """
 
@@ -32,7 +38,7 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import IO, Any
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 DESCRIPTION = "Upload manifests to DepRadar, wait for scans, and enforce the gate."
 # Keep in step with depradar.inventory.canonical_filename on the server.
 LOCKFILES = (
@@ -82,6 +88,18 @@ class ClientError(Exception):
     """Configuration, transport, or API failure; always exits with code 2."""
 
 
+class MissingRoute(ClientError):
+    """The server predates an endpoint; callers may fall back to an older one."""
+
+
+def route_missing(payload: bytes) -> bool:
+    # FastAPI answers unknown routes with this exact body; missing records say what is missing.
+    try:
+        return bool(json.loads(payload) == {"detail": "Not Found"})
+    except ValueError:
+        return False
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     # urllib would forward the Authorization header to any redirect target.
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:
@@ -106,15 +124,14 @@ class Api:
         path: str,
         query: list[tuple[str, str]] | None = None,
         body: bytes | None = None,
+        content_type: str = "application/octet-stream",
     ) -> tuple[int, bytes]:
         url = self.base + path + ("?" + urllib.parse.urlencode(query) if query else "")
-        headers = {
-            "Authorization": "Bearer " + self.token,
-            "Accept": "*/*",
-            "User-Agent": f"depradar-ci/{VERSION}",
-        }
+        headers = {"Accept": "*/*", "User-Agent": f"depradar-ci/{VERSION}"}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
         if body is not None:
-            headers["Content-Type"] = "application/octet-stream"
+            headers["Content-Type"] = content_type
         request = urllib.request.Request(url, data=body, method=method, headers=headers)
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
@@ -130,8 +147,11 @@ class Api:
         path: str,
         query: list[tuple[str, str]] | None = None,
         body: bytes | None = None,
+        content_type: str = "application/octet-stream",
     ) -> bytes:
-        status, payload = self.send(method, path, query, body)
+        status, payload = self.send(method, path, query, body, content_type)
+        if status == 404 and route_missing(payload):
+            raise MissingRoute(f"This DepRadar server does not support {method} {path}")
         if status >= 400:
             try:
                 detail = json.loads(payload).get("detail", "")
@@ -152,9 +172,13 @@ class Api:
         path: str,
         query: list[tuple[str, str]] | None = None,
         body: bytes | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if payload is not None:
+            body = json.dumps(payload).encode()
+        content_type = "application/json" if payload is not None else "application/octet-stream"
         try:
-            value = json.loads(self.call(method, path, query, body))
+            value = json.loads(self.call(method, path, query, body, content_type))
         except ValueError as error:
             raise ClientError("DepRadar returned a response that is not JSON") from error
         if not isinstance(value, dict):
@@ -287,18 +311,97 @@ def escape_command(value: str, property_value: bool = False) -> str:
     return value
 
 
-def policy_query(args: argparse.Namespace) -> list[tuple[str, str]]:
-    query = [
-        ("fail_on", args.fail_on),
-        ("fail_on_unknown", str(args.fail_on_unknown).lower()),
-        ("fail_on_kev", str(not args.no_fail_on_kev).lower()),
-        ("new_only", str(args.new_only).lower()),
-        ("ignore_acknowledged", str(args.ignore_acknowledged).lower()),
-        ("fail_on_incomplete", str(args.fail_on_incomplete).lower()),
-    ]
+def policy_payload(args: argparse.Namespace) -> dict[str, Any]:
+    """The gate this pipeline asks for. Central DepRadar policies may tighten it."""
+    policy: dict[str, Any] = {
+        "fail_on": args.fail_on,
+        "fail_on_unknown": args.fail_on_unknown,
+        "fail_on_kev": not args.no_fail_on_kev,
+        "new_only": args.new_only,
+        "ignore_acknowledged": args.ignore_acknowledged,
+        "fail_on_incomplete": args.fail_on_incomplete,
+    }
+    # Sent only when requested, so older servers that lack the rule still accept the request.
+    if args.require_monitored_manifests:
+        policy["require_monitored_manifests"] = True
     if args.epss_threshold is not None:
-        query.append(("epss_threshold", str(args.epss_threshold)))
-    return query
+        policy["epss_threshold"] = args.epss_threshold
+    return policy
+
+
+def policy_query(args: argparse.Namespace) -> list[tuple[str, str]]:
+    return [
+        (key, str(value).lower() if isinstance(value, bool) else str(value))
+        for key, value in policy_payload(args).items()
+    ]
+
+
+def oidc_available(env: Mapping[str, str]) -> bool:
+    return bool(
+        env.get("DEPRADAR_ID_TOKEN")
+        or (env.get("ACTIONS_ID_TOKEN_REQUEST_URL") and env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+    )
+
+
+def ci_id_token(env: Mapping[str, str], audience: str) -> str:
+    """The CI job's signed OIDC identity token for the DepRadar audience."""
+    supplied = env.get("DEPRADAR_ID_TOKEN", "").strip()
+    if supplied:
+        return supplied
+    url = env.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+    bearer = env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+    if not (url and bearer):
+        raise ClientError(
+            "No CI identity token is available. On GitHub Actions grant the job "
+            "`permissions: id-token: write`; on GitLab add `id_tokens: DEPRADAR_ID_TOKEN` with "
+            f"`aud: {audience}`; or set DEPRADAR_TOKEN instead"
+        )
+    if urllib.parse.urlsplit(url).scheme != "https":
+        raise ClientError("ACTIONS_ID_TOKEN_REQUEST_URL must use HTTPS")
+    separator = "&" if "?" in url else "?"
+    request = urllib.request.Request(
+        url + separator + urllib.parse.urlencode({"audience": audience}),
+        headers={"Authorization": "Bearer " + bearer, "Accept": "application/json"},
+    )
+    opener = urllib.request.build_opener(NoRedirect())
+    try:
+        with opener.open(request, timeout=30) as response:
+            value = json.loads(response.read(64 * 1024)).get("value", "")
+    except (urllib.error.URLError, OSError, ValueError, AttributeError) as error:
+        raise ClientError(f"Could not obtain the GitHub Actions identity token: {error}") from error
+    if not isinstance(value, str) or not value:
+        raise ClientError("GitHub Actions returned no identity token")
+    return value
+
+
+def authenticate(
+    api: Api,
+    args: argparse.Namespace,
+    env: Mapping[str, str],
+    id_token: Callable[[Mapping[str, str], str], str],
+    out: IO[str],
+) -> dict[str, Any]:
+    """Exchange the job's OIDC identity for a short-lived token bound to one project."""
+    audience = args.audience or env.get("DEPRADAR_AUDIENCE", "")
+    if not audience:
+        audience = str(api.json("GET", "/ci/oidc").get("audience", ""))
+    if not audience:
+        raise ClientError("DepRadar did not report an OIDC audience; pass --audience")
+    payload: dict[str, Any] = {"id_token": id_token(env, audience)}
+    project = getattr(args, "project", None) or env.get("DEPRADAR_PROJECT")
+    if project:
+        payload["project"] = project
+    exchanged = api.json("POST", "/ci/identity/exchange", payload=payload)
+    try:
+        token, access = str(exchanged["token"]), str(exchanged["access"])
+        project_name = str(exchanged["project_name"])
+    except (KeyError, TypeError) as error:
+        raise ClientError("DepRadar returned an unexpected identity exchange response") from error
+    if env.get("GITHUB_ACTIONS") == "true":
+        print(f"::add-mask::{token}", file=out)
+    api.token = token
+    print(f"Verified CI identity: {access} access to {project_name} for 30 minutes", file=out)
+    return exchanged
 
 
 def check_timeout(timeout: float) -> None:
@@ -342,16 +445,38 @@ def wait_for(
         api.timeout = request_limit
 
 
+def decide(api: Api, args: argparse.Namespace, scan_ids: list[str], out: IO[str]) -> dict[str, Any]:
+    """Record the gate decision; servers that predate decisions are evaluated without one."""
+    try:
+        return api.json(
+            "POST",
+            "/ci/decisions",
+            payload={"scan_ids": scan_ids, "policy": policy_payload(args)},
+        )
+    except MissingRoute:
+        print("This DepRadar server predates recorded decisions; evaluating only", file=out)
+    query = [("scan_id", scan_id) for scan_id in scan_ids] + policy_query(args)
+    return api.json("GET", "/ci/evaluation", query + [("format", "json")])
+
+
 def write_reports(
-    api: Api, args: argparse.Namespace, scan_ids: list[str], env: Mapping[str, str]
+    api: Api,
+    args: argparse.Namespace,
+    scan_ids: list[str],
+    env: Mapping[str, str],
+    decision_id: str | None = None,
 ) -> None:
+    """Reports render from the recorded decision, so they always match the exit code."""
     targets = [("sarif", args.sarif), ("junit", args.junit), ("markdown", args.markdown)]
     summary = env.get("GITHUB_STEP_SUMMARY") if args.summary else None
     query = [("scan_id", scan_id) for scan_id in scan_ids] + policy_query(args)
     for fmt, destination in targets:
         if not destination and not (fmt == "markdown" and summary):
             continue
-        content = api.call("GET", "/ci/evaluation", query + [("format", fmt)])
+        if decision_id:
+            content = api.call("GET", f"/ci/decisions/{decision_id}", [("format", fmt)])
+        else:
+            content = api.call("GET", "/ci/evaluation", query + [("format", fmt)])
         if destination:
             write_file(destination, content)
         if fmt == "markdown" and summary:
@@ -379,6 +504,19 @@ def report(result: dict[str, Any], env: Mapping[str, str], out: IO[str]) -> None
         file=out,
     )
     github = env.get("GITHUB_ACTIONS") == "true"
+    if result.get("decision_id"):
+        print(f"  Decision {result['decision_id']} recorded in DepRadar", file=out)
+    for change in result.get("adjustments") or []:
+        print(
+            f"  Central policy enforced {change['rule']}: {change['requested']} -> "
+            f"{change['enforced']} ({change['source']})",
+            file=out,
+        )
+    for reason in result.get("reasons") or []:
+        print(f"  x {reason}", file=out)
+        if github:
+            title = escape_command("DepRadar policy", True)
+            print(f"::error title={title}::{escape_command(str(reason))}", file=out)
     for gate in result["scans"]:
         line = f"  {gate['mode']} scan of {gate['target_path']}: {gate['status']}"
         if gate.get("error"):
@@ -424,6 +562,16 @@ def build_parser() -> argparse.ArgumentParser:
     for command in (scan, evaluate):
         command.add_argument("--url", default=None, help="DepRadar URL (env DEPRADAR_URL).")
         command.add_argument("--token-env", default="DEPRADAR_TOKEN", metavar="NAME")
+        command.add_argument(
+            "--auth",
+            choices=["auto", "token", "oidc"],
+            default="auto",
+            help="auto uses the token when set, otherwise the CI job's OIDC identity.",
+        )
+        command.add_argument(
+            "--audience",
+            help="OIDC audience (env DEPRADAR_AUDIENCE; default: asked from the server).",
+        )
         command.add_argument("--ca-file", help="PEM bundle for a private certificate authority.")
         command.add_argument("--allow-insecure-http", action="store_true")
         command.add_argument(
@@ -439,6 +587,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command.add_argument("--ignore-acknowledged", action="store_true")
         command.add_argument("--fail-on-incomplete", action="store_true")
+        command.add_argument(
+            "--require-monitored-manifests",
+            action="store_true",
+            help="Fail unless every manifest the project monitors is part of this run.",
+        )
         command.add_argument("--sarif", metavar="FILE")
         command.add_argument("--junit", metavar="FILE")
         command.add_argument("--markdown", metavar="FILE")
@@ -458,29 +611,38 @@ def run(
     api_factory: Callable[[str, str, argparse.Namespace], Api] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     out: IO[str] = sys.stdout,
+    id_token: Callable[[Mapping[str, str], str], str] = ci_id_token,
 ) -> int:
     env = os.environ if env is None else env
     args = build_parser().parse_args(argv)
     try:
         token = env.get(args.token_env, "")
-        if not token:
-            raise ClientError(f"Set the {args.token_env} environment variable to a DepRadar token")
+        auth = args.auth
+        if auth == "auto":
+            auth = "oidc" if not token and oidc_available(env) else "token"
+        if auth == "token" and not token:
+            raise ClientError(
+                f"Set the {args.token_env} environment variable to a DepRadar token, or grant "
+                "the job an OIDC identity for a repository trusted in DepRadar"
+            )
         base = api_base(args.url or env.get("DEPRADAR_URL", ""), args.allow_insecure_http)
+        secret = token if auth == "token" else ""
         if api_factory is not None:
-            api = api_factory(base, token, args)
+            api = api_factory(base, secret, args)
         else:
-            api = Api(base, token, cafile=args.ca_file)
+            api = Api(base, secret, cafile=args.ca_file)
+        identity = authenticate(api, args, env, id_token, out) if auth == "oidc" else None
         if args.command == "scan":
             check_timeout(args.timeout)
-            scan_ids = upload_all(api, args, env, out)
+            scan_ids = upload_all(api, args, env, out, identity)
             wait_for(api, scan_ids, args.timeout, sleep, out)
         else:
             scan_ids = list(dict.fromkeys(args.scan_ids))
-        query = [("scan_id", scan_id) for scan_id in scan_ids] + policy_query(args)
-        result = api.json("GET", "/ci/evaluation", query + [("format", "json")])
+        result = decide(api, args, scan_ids, out)
+        decision_id = result.get("decision_id")
         if args.json:
             write_file(args.json, (json.dumps(result, indent=2) + "\n").encode())
-        write_reports(api, args, scan_ids, env)
+        write_reports(api, args, scan_ids, env, str(decision_id) if decision_id else None)
         try:
             report(result, env, out)
         except (KeyError, TypeError) as error:
@@ -497,15 +659,29 @@ def run(
 
 
 def upload_all(
-    api: Api, args: argparse.Namespace, env: Mapping[str, str], out: IO[str]
+    api: Api,
+    args: argparse.Namespace,
+    env: Mapping[str, str],
+    out: IO[str],
+    identity: dict[str, Any] | None = None,
 ) -> list[str]:
     context = ci_context(env)
     project = args.project or env.get("DEPRADAR_PROJECT") or context["repository"]
+    if identity is not None:
+        # A verified identity is bound to one project, whatever name the repository has.
+        project = str(identity.get("project_id") or project)
     if not project:
         raise ClientError("Pass --project or set DEPRADAR_PROJECT")
     mode = args.mode
     if mode == "auto":
         mode = "check" if context["change_request"] else "monitor"
+    if identity is not None and identity.get("access") == "check":
+        if args.mode == "monitor":
+            raise ClientError(
+                "This run is trusted for check uploads only; monitored state changes only from "
+                "the trusted workflow on the identity's monitor branch"
+            )
+        mode = "check"
     root = Path(args.root)
     revision = args.revision or context["revision"]
     scan_ids = []

@@ -5,19 +5,29 @@ import hmac
 import secrets
 from dataclasses import dataclass
 
+from depradar.domain.identity import VerifiedRun
 from depradar.domain.tokens import SCOPES
 
 
 @dataclass(frozen=True)
 class Principal:
-    """The owner session (every scope, every project) or a scoped API token."""
+    """The owner session (every scope, every project), a scoped API token, or a verified run."""
 
     token_id: str | None = None
     scopes: frozenset[str] = frozenset(SCOPES)
     project_id: str | None = None
+    name: str = "Owner"
+    # Set for short-lived tokens exchanged from a verified OIDC identity token.
+    run: VerifiedRun | None = None
 
     def allows(self, project_id: str) -> bool:
         return self.project_id is None or self.project_id == project_id
+
+    def can_upload(self, mode: str) -> bool:
+        """Check uploads never change monitored state, so a narrower scope suffices."""
+        if "inventories:write" in self.scopes:
+            return True
+        return mode == "check" and "inventories:check" in self.scopes
 
 
 def digest(value: str) -> str:

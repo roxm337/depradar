@@ -26,6 +26,10 @@ class FeedUnavailable(Exception):
     """Public vulnerability intelligence could not be fetched or understood."""
 
 
+class IdentityRejected(Exception):
+    """An OIDC identity token failed verification; the message is safe to show the caller."""
+
+
 # (manifest content, canonical filename) -> scanner report
 Scanner = Callable[[bytes, str], ScanResponse]
 # -> whether the scanner service answers its health check
@@ -36,6 +40,9 @@ NotificationSender = Callable[[str, dict[str, Any], Message, str], str]
 TelegramUpdates = Callable[[int], list[dict[str, Any]]]
 # (CVE ids) -> (CISA KEV catalog, {CVE: (EPSS score, percentile)})
 IntelligenceFeed = Callable[[list[str]], tuple[set[str], dict[str, tuple[float, float | None]]]]
+# (signed OIDC token, trusted issuers, expected audience) -> verified claims, or IdentityRejected.
+# Implementations fetch signing keys only for the trusted issuers, never for the token's own iss.
+IdentityVerifier = Callable[[str, set[str], str], dict[str, Any]]
 
 
 class InventoryStore(Protocol):

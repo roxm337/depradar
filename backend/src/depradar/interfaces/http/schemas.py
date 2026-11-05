@@ -7,7 +7,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from depradar.domain.gate import GatePolicy
+from depradar.domain.gate import GatePolicy, PolicySource
+from depradar.domain.identity import Provider
+from depradar.domain.policy import PolicyRules
 from depradar.domain.tokens import Scope
 
 
@@ -255,3 +257,163 @@ class CiUploadOutput(BaseModel):
 class EvaluationQuery(GatePolicy):
     scan_id: list[UUID] = Field(min_length=1, max_length=50)
     format: Literal["json", "sarif", "junit", "markdown"] = "json"
+
+
+class DecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scan_ids: list[UUID] = Field(min_length=1, max_length=50)
+    policy: GatePolicy = Field(
+        default_factory=GatePolicy,
+        description="The pipeline's requested gate; central policies may tighten it.",
+    )
+
+
+class DecisionActor(BaseModel):
+    kind: Literal["owner", "token", "identity"]
+    name: str
+    token_id: str | None
+    verified: bool
+    provider: str | None
+    repository: str | None
+    workflow: str | None
+    ref: str | None
+    event: str | None
+    run_id: str | None
+    run_url: str | None
+
+
+class DecisionSummary(BaseModel):
+    id: str
+    created_at: datetime
+    status: str
+    project_id: str
+    project_name: str
+    revision: str | None
+    commit: str | None
+    mode: str
+    violations: int
+    ignored: int
+    below_threshold: int
+    missing_manifests: int
+    actor: DecisionActor
+    policy_sources: list[PolicySource]
+    adjustments: int
+
+
+class DecisionInputOutput(BaseModel):
+    scan_id: str
+    target_path: str
+    filename: str
+    mode: str
+    sha256: str
+    revision: str | None
+    scan_status: str
+    complete: bool
+    engine_version: str | None
+    completed_at: datetime | None
+    coverage_notes: list[str]
+
+
+class DecisionException(BaseModel):
+    finding_id: str | None
+    target_path: str
+    package_name: str
+    package_version: str
+    advisory_ids: list[str]
+    workflow_status: str
+    reason: str
+    risk_until: datetime | None
+
+
+class DecisionDetail(DecisionSummary):
+    inputs: list[DecisionInputOutput]
+    exceptions: list[DecisionException]
+    intelligence_updated_at: datetime | None
+    result: dict[str, Any]
+
+
+class PolicyVersionOutput(BaseModel):
+    id: str | None
+    scope: Literal["installation", "project"]
+    project_id: str | None
+    version: int
+    rules: PolicyRules | None
+    note: str
+    created_at: datetime | None
+
+
+class ProjectPolicyOutput(BaseModel):
+    project_id: str
+    policy: PolicyVersionOutput
+    effective: PolicyRules
+
+
+class PoliciesOutput(BaseModel):
+    installation: PolicyVersionOutput
+    projects: list[ProjectPolicyOutput]
+
+
+class InstallationPolicyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    rules: PolicyRules
+    note: str = Field(default="", max_length=500)
+
+
+class ProjectPolicyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    rules: PolicyRules | None
+    note: str = Field(default="", max_length=500)
+
+
+class IdentityInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    project_id: UUID
+    name: str = Field(default="", max_length=100)
+    provider: Provider
+    issuer: str | None = Field(default=None, max_length=300)
+    repository: str = Field(
+        min_length=3, max_length=300, pattern=r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$"
+    )
+    repository_id: str | None = Field(default=None, max_length=40, pattern=r"^\d*$")
+    workflow: str | None = Field(default=None, max_length=300)
+    monitor_ref: str | None = Field(default=None, max_length=300)
+
+
+class IdentityOutput(Row):
+    id: str
+    project_id: str
+    name: str
+    provider: str
+    issuer: str
+    repository: str
+    repository_id: str | None
+    workflow: str | None
+    monitor_ref: str | None
+    created_at: datetime
+    last_used_at: datetime | None
+    disabled_at: datetime | None
+
+
+class IdentitiesOutput(BaseModel):
+    audience: str
+    identities: list[IdentityOutput]
+
+
+class OidcConfigOutput(BaseModel):
+    audience: str = Field(description="Request OIDC identity tokens with this audience.")
+
+
+class ExchangeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id_token: str = Field(min_length=20, max_length=16384)
+    project: str | None = Field(default=None, max_length=120)
+
+
+class ExchangeOutput(BaseModel):
+    token: str = Field(description="Short-lived bearer token; keep it masked in CI logs.")
+    expires_at: datetime
+    project_id: str
+    project_name: str
+    access: Literal["monitor", "check"]
+    scopes: list[str]
+    identity_id: str

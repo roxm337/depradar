@@ -127,6 +127,85 @@ def test_populated_database_upgrades_from_0003_and_back(monkeypatch: pytest.Monk
         get_settings.cache_clear()
 
 
+def test_populated_database_upgrades_from_0005_and_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0006 keeps owner tokens, matches the ORM schema, and downgrades without identity tokens."""
+    from alembic import command
+    from alembic.autogenerate import compare_metadata
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+
+    from depradar.config import get_settings
+    from depradar.domain.entities import Base
+
+    schema = "migration_0006_" + uuid4().hex
+    url = os.environ["DEPRADAR_TEST_DATABASE_URL"]
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    project, identity = str(uuid4()), str(uuid4())
+    added = {"trusted_identity", "security_policy", "gate_decision"}
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'SET search_path TO "{schema}"'))
+            connection.commit()
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0005")
+            connection.execute(
+                text(
+                    "INSERT INTO project (id, name, description, created_at, monitoring_enabled,"
+                    " check_interval_hours, notifications_enabled)"
+                    " VALUES (:id, 'Legacy', '', now(), true, 24, true)"
+                ),
+                {"id": project},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO api_token (id, name, token_hash, display_prefix, scopes,"
+                    " created_at, expires_at) VALUES (:id, 'CI', :hash, 'depradar_abc',"
+                    " '[\"scans:read\"]', now(), now() + interval '1 day')"
+                ),
+                {"id": str(uuid4()), "hash": "1" * 64},
+            )
+            connection.commit()
+            command.upgrade(config, "head")
+            assert connection.execute(text("SELECT kind FROM api_token")).scalar_one() == "static"
+            drift = [
+                change
+                for change in compare_metadata(
+                    MigrationContext.configure(connection), Base.metadata
+                )
+                if any(name in str(change) for name in added | {"api_token"})
+            ]
+            assert drift == []
+            connection.execute(
+                text(
+                    "INSERT INTO trusted_identity (id, project_id, name, provider, issuer,"
+                    " repository, created_at) VALUES (:id, :project, 'web', 'github',"
+                    " 'https://token.actions.githubusercontent.com', 'acme/web', now())"
+                ),
+                {"id": identity, "project": project},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO api_token (id, name, token_hash, display_prefix, scopes,"
+                    " created_at, expires_at, kind, identity_id, project_id) VALUES (:id, 'run',"
+                    " :hash, 'depradar_def', '[]', now(), now(), 'identity', :identity, :project)"
+                ),
+                {"id": str(uuid4()), "hash": "2" * 64, "identity": identity, "project": project},
+            )
+            connection.commit()
+            command.downgrade(config, "0005")
+            assert connection.execute(text("SELECT count(*) FROM api_token")).scalar_one() == 1
+            assert not added & set(inspect(connection).get_table_names(schema=schema))
+            connection.commit()
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        engine.dispose()
+        get_settings.cache_clear()
+
+
 def test_backup_restore_drill_on_postgresql(
     harness: Harness, project_id: str, tmp_path: Path
 ) -> None:

@@ -11,12 +11,13 @@ from sqlalchemy.orm import Session
 from depradar.application import auth
 from depradar.application.errors import Unauthorized
 from depradar.application.locking import lock_writes
-from depradar.application.ports import InventoryStore, TelegramUpdates
+from depradar.application.ports import IdentityVerifier, InventoryStore, TelegramUpdates
 from depradar.config import Settings, get_settings
 from depradar.domain.entities import OwnerSession
 from depradar.domain.security import Principal
 from depradar.domain.tokens import well_formed
 from depradar.infrastructure.database import get_db
+from depradar.infrastructure.oidc import JwksVerifier
 from depradar.infrastructure.storage import LocalInventoryStore
 from depradar.infrastructure.telegram import fetch_updates
 
@@ -34,8 +35,17 @@ def telegram_updates(settings: Config) -> TelegramUpdates:
     return partial(fetch_updates, settings)
 
 
+# One verifier per process, so issuers' signing keys are cached across requests.
+JWKS_VERIFIER = JwksVerifier()
+
+
+def identity_verifier() -> IdentityVerifier:
+    return JWKS_VERIFIER
+
+
 Store = Annotated[InventoryStore, Depends(inventory_store)]
 Updates = Annotated[TelegramUpdates, Depends(telegram_updates)]
+Verifier = Annotated[IdentityVerifier, Depends(identity_verifier)]
 
 
 def check_origin(request: Request, settings: Settings) -> None:
@@ -108,6 +118,8 @@ ReadFindings = Annotated[Principal, Depends(authorize("findings:read"))]
 WriteInventories = Annotated[Principal, Depends(authorize("inventories:write"))]
 # Upload endpoints stream the body first and take the write barrier themselves.
 UploadInventories = Annotated[Principal, Depends(authorize("inventories:write", lock=False))]
+# Pipeline uploads check the scope for the requested mode: check uploads accept inventories:check.
+PipelineUpload = Annotated[Principal, Depends(authorize(lock=False))]
 
 
 async def read_limited(request: Request, limit: int) -> bytes:

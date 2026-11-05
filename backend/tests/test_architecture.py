@@ -30,7 +30,7 @@ RULES = {
     "application": ({"domain", "application", "config"}, {"pydantic", "sqlalchemy"}, False),
     "infrastructure": (
         {"domain", "application", "infrastructure", "config"},
-        {"alembic", "httpx", "pydantic", "pydantic_settings", "sqlalchemy"},
+        {"alembic", "cryptography", "httpx", "pydantic", "pydantic_settings", "sqlalchemy"},
         True,
     ),
 }

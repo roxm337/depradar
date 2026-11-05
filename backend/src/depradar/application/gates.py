@@ -1,10 +1,14 @@
-"""Evaluate finished scans against a CI/CD gate policy. Evaluation never changes findings."""
+"""Evaluate finished scans against a CI/CD gate policy. Evaluation never changes findings.
+
+Central policies always apply: the request can tighten the gate but never relax it.
+"""
 
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from depradar.application import policies
 from depradar.application.errors import Conflict, NotFound
 from depradar.application.ports import InventoryStore
 from depradar.application.threat_intel import cached_signals
@@ -24,8 +28,10 @@ from depradar.domain.gate import (
     GateResult,
     ScanGate,
     gate_result,
+    missing_manifests,
     scan_gate,
 )
+from depradar.domain.policy import enforce
 from depradar.domain.security import Principal
 
 
@@ -39,13 +45,49 @@ def scans_for(db: Session, principal: Principal, scan_ids: list[str]) -> list[Sc
     return scans
 
 
-def evaluate(db: Session, scans: list[Scan], policy: GatePolicy) -> GateResult:
+def evaluate(db: Session, scans: list[Scan], requested: GatePolicy) -> GateResult:
     if any(scan.status not in FINISHED for scan in scans):
         raise Conflict(
             "A scan is still queued or running; poll GET /api/scans/{id} until it finishes"
         )
     now = utcnow()
-    return gate_result([evaluate_scan(db, scan, policy, now) for scan in scans], policy, now)
+    project_ids = sorted({scan.project_id for scan in scans})
+    minimums = policies.minimums(db, project_ids)
+    policy, adjustments = enforce(requested, minimums)
+    gates = [evaluate_scan(db, scan, policy, now) for scan in scans]
+    missing = (
+        missing_manifests(gates, monitored_targets(db, project_ids))
+        if policy.require_monitored_manifests
+        else []
+    )
+    return gate_result(
+        gates,
+        policy,
+        now,
+        requested=requested,
+        sources=[source for source, _ in minimums],
+        adjustments=adjustments,
+        missing=missing,
+    )
+
+
+def monitored_targets(db: Session, project_ids: list[str]) -> dict[str, tuple[str, list[str]]]:
+    """Manifests each project monitors: {project ID: (name, target paths)}. Retired ones end."""
+    found: dict[str, tuple[str, list[str]]] = {}
+    for project_id in project_ids:
+        project = db.get(Project, project_id)
+        assert project is not None
+        paths = db.scalars(
+            select(Inventory.target_path)
+            .where(
+                Inventory.project_id == project_id,
+                Inventory.kind == "monitor",
+                Inventory.retired_at.is_(None),
+            )
+            .distinct()
+        )
+        found[project_id] = (project.name, sorted(paths))
+    return found
 
 
 def evaluate_scan(db: Session, scan: Scan, policy: GatePolicy, now: datetime) -> ScanGate:
