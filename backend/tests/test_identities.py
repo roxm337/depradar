@@ -1,3 +1,4 @@
+import base64
 import io
 from collections.abc import Iterator
 from typing import Any
@@ -96,6 +97,15 @@ def test_runs_are_bound_to_repository_identity_and_workflow() -> None:
         verified_run("github", GITHUB, {**github_claims(AUDIENCE), "sha": "not-a-commit"})
 
 
+@pytest.mark.parametrize(
+    ("protected", "access"),
+    [("true", "monitor"), (True, "monitor"), ("false", "check"), (False, "check")],
+)
+def test_github_runs_from_an_unprotected_branch_only_check(protected: Any, access: str) -> None:
+    claims = {**github_claims(AUDIENCE), "ref_protected": protected}
+    assert access_for(binding(), verified_run("github", GITHUB, claims)) == access
+
+
 def test_gitlab_runs_need_a_protected_branch_to_monitor() -> None:
     gitlab = binding(
         provider="gitlab",
@@ -136,6 +146,11 @@ def test_verifier_checks_signature_issuer_algorithm_audience_and_lifetime(issuer
     rejected(issuer.sign(github_claims(AUDIENCE, lifetime=-120)), "expired")
     rejected(issuer.sign({**github_claims(AUDIENCE), "nbf": 2**40}), "not valid yet")
     rejected("not-a-token", "malformed")
+    nested = issuer.sign(github_claims(AUDIENCE)).split(".")
+    deep = base64.urlsafe_b64encode(b"[" * 11000).rstrip(b"=").decode()
+    rejected(f"{deep}.{nested[1]}.{nested[2]}", "malformed")
+    rejected(issuer.sign({**github_claims(AUDIENCE), "exp": float("nan")}), "malformed")
+    rejected(issuer.sign({**github_claims(AUDIENCE), "exp": 1e400}), "malformed")
     rejected(f"{header}.{payload}.%%%", "malformed")
     # Keys are never fetched for an issuer the owner does not trust.
     before = len(issuer.fetches)
@@ -171,6 +186,28 @@ def test_verifier_caches_keys_and_limits_refetching(issuer: Issuer) -> None:
         JwksVerifier(fetch=elsewhere.fetch)(
             elsewhere.sign(github_claims(AUDIENCE)), trusted, AUDIENCE
         )
+
+
+def test_last_known_keys_keep_working_while_the_issuer_is_down(issuer: Issuer) -> None:
+    clock, down, attempts = [1000.0], [False], [0]
+
+    def fetch(url: str) -> dict[str, Any]:
+        attempts[0] += 1
+        if down[0]:
+            raise IdentityRejected("Could not fetch the issuer's signing keys")
+        return issuer.fetch(url)
+
+    verifier = JwksVerifier(fetch=fetch, clock=lambda: clock[0])
+    claims = {**github_claims(AUDIENCE), "iat": 900, "nbf": 900, "exp": 10**6}
+    token = issuer.sign(claims)
+    verifier(token, {GITHUB}, AUDIENCE)
+    down[0], clock[0], attempts[0] = True, clock[0] + 3600, 0
+    verifier(token, {GITHUB}, AUDIENCE)
+    verifier(token, {GITHUB}, AUDIENCE)
+    assert attempts[0] == 1  # one failed refresh, then a minute's pause
+    clock[0] += 86400
+    with pytest.raises(IdentityRejected, match="Could not fetch"):
+        verifier(token, {GITHUB}, AUDIENCE)
 
 
 def add_identity(harness: Harness, project_id: str, **values: Any) -> Any:
@@ -228,7 +265,7 @@ def test_exchanged_tokens_follow_the_verified_run(
     checked = exchange(anonymous, issuer.sign(pull))
     assert checked.status_code == 201, checked.text
     grant = checked.json()
-    assert grant["access"] == "check" and "inventories:write" not in grant["scopes"]
+    assert grant["access"] == "check" and grant["scopes"] == ["inventories:check", "scans:read"]
     assert grant["project_id"] == project_id and grant["identity_id"] == identity_id
     denied = ci_upload(anonymous, grant["token"])
     assert denied.status_code == 403 and "check manifests" in denied.json()["detail"]
@@ -253,6 +290,15 @@ def test_exchanged_tokens_follow_the_verified_run(
     assert actor["run_url"] == "https://github.com/acme/web/actions/runs/777"
     monitor = exchange(anonymous, issuer.sign(github_claims(AUDIENCE))).json()
     assert monitor["access"] == "monitor" and "inventories:write" in monitor["scopes"]
+    # Citing the pull request's scan keeps that scan's revision and no verified commit.
+    cited = anonymous.post(
+        "/api/ci/decisions",
+        json={"scan_ids": [check.json()["scan"]["id"]]},
+        headers=bearer(monitor["token"]),
+    )
+    assert cited.status_code == 201
+    latest = harness.client.get("/api/ci/decisions").json()[0]
+    assert latest["revision"] == "feat@0123456789ab" and latest["commit"] is None
     uploaded = ci_upload(anonymous, monitor["token"])
     assert uploaded.status_code == 202 and uploaded.json()["inventory"]["kind"] == "monitor"
     # Projects cannot be created through an identity, and other projects are invisible.
@@ -305,6 +351,36 @@ def test_a_repository_trusted_by_several_projects_needs_a_project(
     assert chosen["project_name"] == "Other" and chosen["access"] == "check"
     assert exchange(anonymous, token, project_id).json()["access"] == "monitor"
     assert exchange(anonymous, token, "Unrelated").status_code == 403
+
+
+def test_repository_id_is_pinned_on_first_use(
+    harness: Harness,
+    anonymous: TestClient,
+    project_id: str,
+    issuer: Issuer,
+    verifier: JwksVerifier,
+) -> None:
+    identity_id = add_identity(harness, project_id, repository_id=None).json()["id"]
+    assert exchange(anonymous, issuer.sign(github_claims(AUDIENCE))).status_code == 201
+    with harness.factory() as db:
+        assert db.get(TrustedIdentity, identity_id).repository_id == "4242"
+    # A deleted and re-created namesake has a new ID and no longer matches.
+    namesake = issuer.sign(github_claims(AUDIENCE, repository_id="9001"))
+    assert exchange(anonymous, namesake).status_code == 403
+
+
+def test_only_projects_that_accept_the_workflow_need_choosing(
+    harness: Harness,
+    anonymous: TestClient,
+    project_id: str,
+    issuer: Issuer,
+    verifier: JwksVerifier,
+) -> None:
+    other = harness.client.post("/api/projects", json={"name": "Other"}, headers=harness.headers)
+    add_identity(harness, project_id)
+    add_identity(harness, other.json()["id"], workflow=".github/workflows/release.yml")
+    chosen = exchange(anonymous, issuer.sign(github_claims(AUDIENCE)))
+    assert chosen.status_code == 201 and chosen.json()["project_id"] == project_id
 
 
 def test_ci_client_authenticates_with_the_job_identity(

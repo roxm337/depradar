@@ -29,8 +29,9 @@ from depradar.domain.security import digest
 from depradar.domain.tokens import DISPLAY_LENGTH, generate_token
 
 TOKEN_LIFETIME = timedelta(minutes=30)
-CHECK_SCOPES = ["findings:read", "inventories:check", "projects:read", "scans:read"]
-MONITOR_SCOPES = sorted([*CHECK_SCOPES, "inventories:write"])
+# Only what the CI client needs: upload, poll scans, and record the decision.
+CHECK_SCOPES = ["inventories:check", "scans:read"]
+MONITOR_SCOPES = ["inventories:check", "inventories:write", "scans:read"]
 
 
 def audience(settings: Settings) -> str:
@@ -162,17 +163,7 @@ def exchange(
             matches.append((identity, run))
     if not matches:
         raise Forbidden(f"No trusted identity matches repository {repository or '(unknown)'}")
-    if len({identity.project_id for identity, _ in matches}) > 1:
-        reference = (project_reference or "").strip()
-        if not reference:
-            raise Conflict("Several projects trust this repository; pass the project name or ID")
-        matches = [
-            (identity, run)
-            for identity, run in matches
-            if _project_matches(get_project(db, identity.project_id), reference)
-        ]
-        if not matches:
-            raise Forbidden(f"Project {reference} does not trust repository {repository}")
+    # Workflow rules come first, so only projects that accept this run need choosing between.
     granted: list[tuple[Access, TrustedIdentity, VerifiedRun]] = []
     errors = []
     for identity, run in matches:
@@ -182,6 +173,17 @@ def exchange(
             errors.append(str(exc))
     if not granted:
         raise Forbidden(errors[0])
+    if len({identity.project_id for _, identity, _ in granted}) > 1:
+        reference = (project_reference or "").strip()
+        if not reference:
+            raise Conflict("Several projects trust this repository; pass the project name or ID")
+        granted = [
+            entry
+            for entry in granted
+            if _project_matches(get_project(db, entry[1].project_id), reference)
+        ]
+        if not granted:
+            raise Forbidden(f"Project {reference} does not trust repository {repository}")
     # Several bindings may cover one repository, such as a checks-only one for another workflow.
     access, identity, run = min(granted, key=lambda entry: (entry[0] != "monitor", entry[1].id))
     lock_writes(db)
@@ -189,6 +191,9 @@ def exchange(
     db.refresh(identity)
     if identity.disabled_at is not None:
         raise Unauthorized("This trusted identity was removed")
+    if identity.repository_id is None:
+        # Pin the immutable ID on first use, so a later namesake repository cannot match.
+        identity.repository_id = run.repository_id
     project = get_project(db, identity.project_id)
     secret = generate_token()
     now = utcnow()
