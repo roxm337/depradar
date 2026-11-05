@@ -22,8 +22,10 @@ from depradar.interfaces.http.routes import (
     auth,
     ci,
     findings,
+    identities,
     notifications,
     operations,
+    policies,
     projects,
     tokens,
 )
@@ -88,6 +90,8 @@ for router in (
     findings.router,
     notifications.router,
     tokens.router,
+    policies.router,
+    identities.router,
     ci.router,
 ):
     app.include_router(router)

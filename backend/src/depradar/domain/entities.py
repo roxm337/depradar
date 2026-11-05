@@ -291,6 +291,26 @@ class FileDeletion(Base):
     created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow)
 
 
+class TrustedIdentity(Base):
+    """A CI repository (and optionally one workflow) allowed to act for one project via OIDC."""
+
+    __tablename__ = "trusted_identity"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    provider: Mapped[str] = mapped_column(String(20))
+    issuer: Mapped[str] = mapped_column(String(300))
+    repository: Mapped[str] = mapped_column(String(300))
+    repository_id: Mapped[str | None] = mapped_column(String(40))
+    # Path of the only workflow or pipeline configuration allowed to use this identity.
+    workflow: Mapped[str | None] = mapped_column(String(300))
+    # Runs of this protected branch may update monitored state; None means checks only.
+    monitor_ref: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
+    disabled_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
+
+
 class ApiToken(Base):
     """Scoped automation credential; only a SHA-256 digest of the secret is stored."""
 
@@ -305,3 +325,47 @@ class ApiToken(Base):
     expires_at: Mapped[datetime] = mapped_column(UtcTimestamp())
     last_used_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     revoked_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
+    # "static" tokens are created by the owner; "identity" tokens are short-lived exchanges of a
+    # verified OIDC run and carry that run's claims.
+    kind: Mapped[str] = mapped_column(String(20), default="static")
+    identity_id: Mapped[str | None] = mapped_column(ForeignKey("trusted_identity.id"), index=True)
+    claims: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class SecurityPolicy(Base):
+    """One immutable version of a central gate minimum; the newest version per scope applies."""
+
+    __tablename__ = "security_policy"
+    __table_args__ = (UniqueConstraint("scope_key", "version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    # "installation", or the project ID for a project policy.
+    scope_key: Mapped[str] = mapped_column(String(36))
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("project.id"), index=True)
+    version: Mapped[int]
+    # None records that a project override was removed.
+    rules: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    note: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow)
+
+
+class GateDecision(Base):
+    """An immutable, explainable record of one CI gate decision and the evidence behind it."""
+
+    __tablename__ = "gate_decision"
+    __table_args__ = (Index("ix_gate_decision_project_created", "project_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"))
+    created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow, index=True)
+    status: Mapped[str] = mapped_column(String(20))
+    mode: Mapped[str] = mapped_column(String(20))
+    revision: Mapped[str | None] = mapped_column(String(200))
+    # Full commit SHA, only when an OIDC-verified run established it.
+    commit: Mapped[str | None] = mapped_column(String(64))
+    violations: Mapped[int] = mapped_column(default=0)
+    ignored: Mapped[int] = mapped_column(default=0)
+    below_threshold: Mapped[int] = mapped_column(default=0)
+    actor: Mapped[dict[str, Any]] = mapped_column(JSON)
+    inputs: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    exceptions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    intelligence_updated_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
+    result: Mapped[dict[str, Any]] = mapped_column(JSON)

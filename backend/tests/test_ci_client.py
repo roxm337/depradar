@@ -34,6 +34,7 @@ class AppApi(Api):
         super().__init__("http://localhost:8000/api", token)
         self.client = TestClient(app)
         self.advance = advance
+        self.requests: list[tuple[str, str]] = []
 
     def send(
         self,
@@ -41,15 +42,16 @@ class AppApi(Api):
         path: str,
         query: list[tuple[str, str]] | None = None,
         body: bytes | None = None,
+        content_type: str = "application/octet-stream",
     ) -> tuple[int, bytes]:
         if method == "GET" and path.startswith("/scans/"):
             self.advance()
+        self.requests.append((method, path))
+        headers = {"Content-Type": content_type} if body is not None else {}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
         response = self.client.request(
-            method,
-            "/api" + path,
-            params=query,
-            content=body,
-            headers={"Authorization": "Bearer " + self.token},
+            method, "/api" + path, params=query, content=body, headers=headers
         )
         return response.status_code, response.content
 
@@ -318,6 +320,7 @@ class ScriptedApi(Api):
         path: str,
         query: list[tuple[str, str]] | None = None,
         body: bytes | None = None,
+        content_type: str = "application/octet-stream",
     ) -> tuple[int, bytes]:
         return self.responses[path.split("/")[1]]
 

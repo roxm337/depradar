@@ -19,6 +19,7 @@ from depradar.application.errors import (
 from depradar.application.locking import lock_writes
 from depradar.config import Settings
 from depradar.domain.entities import ApiToken, AuthGuard, Owner, OwnerSession, Project, utcnow
+from depradar.domain.identity import VerifiedRun
 from depradar.domain.security import DUMMY_HASH, Principal, digest, hash_password, verify_password
 from depradar.domain.tokens import DISPLAY_LENGTH, SCOPES, generate_token
 
@@ -125,15 +126,28 @@ def principal_for(db: Session, secret: str) -> Principal:
         token.last_used_at = now
         # Tokens are excluded from backups, so this bookkeeping needs no write barrier.
         db.commit()
+    run = VerifiedRun.from_json(token.claims) if token.kind == "identity" else None
+    if token.kind == "identity" and run is None:
+        # An exchanged token is only meaningful with the verified run it was issued for.
+        raise Unauthorized("API token is invalid, expired, or revoked")
     return Principal(
         token_id=token.id,
         scopes=frozenset(token.scopes).intersection(SCOPES),
         project_id=token.project_id,
+        name=token.name,
+        run=run,
     )
 
 
 def list_tokens(db: Session) -> list[ApiToken]:
-    return list(db.scalars(select(ApiToken).order_by(ApiToken.created_at.desc(), ApiToken.id)))
+    """Owner-created tokens; short-lived identity exchanges are recorded on each decision."""
+    return list(
+        db.scalars(
+            select(ApiToken)
+            .where(ApiToken.kind == "static")
+            .order_by(ApiToken.created_at.desc(), ApiToken.id)
+        )
+    )
 
 
 def create_token(
@@ -160,7 +174,7 @@ def create_token(
 
 def revoke_token(db: Session, token_id: str) -> None:
     token = db.get(ApiToken, token_id)
-    if token is None:
+    if token is None or token.kind != "static":
         raise NotFound("Token not found")
     if token.revoked_at is None:
         token.revoked_at = utcnow()

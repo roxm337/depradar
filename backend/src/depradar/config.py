@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     telegram_api_base_url: str = "https://api.telegram.org"
     allow_insecure_smtp: bool = False
     dashboard_url: str = "http://localhost:8000"
+    # Audience pipelines request for OIDC identity tokens; defaults to dashboard_url.
+    oidc_audience: str = ""
     delivery_max_attempts: int = Field(default=5, ge=1, le=10)
     intelligence_refresh_hours: int = Field(default=24, ge=1, le=168)
     epss_api_url: str = "https://api.first.org/data/v1/epss"

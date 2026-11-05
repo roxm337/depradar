@@ -177,7 +177,8 @@ export function inventoryKind(name: string) {
 }
 
 export const tokenPresets: Record<string, { label: string; detail: string; scopes: ApiToken["scopes"] }> = {
-  pipeline: { label: "Pipeline gate", detail: "Upload lockfiles, wait for scans, and evaluate the gate.", scopes: ["projects:read", "inventories:write", "scans:read", "findings:read"] },
+  pipeline: { label: "Default-branch pipeline", detail: "Keeps monitored manifests current and gates changes.", scopes: ["projects:read", "inventories:write", "scans:read", "findings:read"] },
+  checks: { label: "Pull request checks", detail: "Gates pull and merge requests. Cannot change monitored state.", scopes: ["projects:read", "inventories:check", "scans:read", "findings:read"] },
   onboarding: { label: "Pipeline gate + onboarding", detail: "Also creates missing projects, for agency-wide templates.", scopes: ["projects:read", "projects:write", "inventories:write", "scans:read", "findings:read"] },
   reporting: { label: "Read-only reporting", detail: "Read projects, scans, and findings for dashboards and exports.", scopes: ["projects:read", "scans:read", "findings:read"] },
 };

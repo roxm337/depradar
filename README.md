@@ -9,7 +9,10 @@ per-project alert thresholds, EPSS/KEV enrichment, delivery attempt history, ser
 retention, and verified backup/restore. Pipelines integrate through scoped API tokens, a
 standard-library client, a GitHub Action, and a GitLab template: default-branch pipelines keep
 monitored inventories current, and pull/merge request pipelines are gated without touching
-monitored state. One owner account administers the installation; team accounts are not built yet.
+monitored state. Owner-defined, versioned central policies set a minimum that pipelines cannot
+relax; every gate decision is recorded with its evidence; and GitHub/GitLab jobs can authenticate
+with their OIDC identity instead of a stored secret, with pull/merge request runs limited to
+check-only access. One owner account administers the installation; team accounts are not built yet.
 Uploading an inventory records what was submitted; rechecking it does not refresh source code or
 prove deployed state.
 
@@ -193,8 +196,9 @@ It performs a PostgreSQL backup restore drill as part of the complete flow. See
 
 ## CI/CD integration
 
-Create a token in Settings → **CI/CD pipelines**, store it as the `DEPRADAR_TOKEN` secret, and run
-the gate from any pipeline with Python 3.9+:
+Trust the repository in Settings → **Trusted identities** (GitHub Actions and GitLab OIDC, no
+stored secret), or create a token in Settings → **CI/CD access** and store it as the
+`DEPRADAR_TOKEN` secret. Then run the gate from any pipeline with Python 3.9+:
 
 ```sh
 curl -fsSL "$DEPRADAR_URL/api/ci/client.py" -o depradar_ci.py
@@ -206,7 +210,9 @@ GitLab includes [`integrations/gitlab/depradar.gitlab-ci.yml`](integrations/gitl
 Gates honor accepted risk, can fail on severity, CISA KEV, EPSS, or partial coverage, and report
 as SARIF, JUnit, Markdown, or JSON. Exit codes are 0 (pass), 1 (violation), and 2 (error).
 Tokens are scoped, expire within a year, can be restricted to one client project, and are never
-included in backups. See [CI/CD integration](docs/CI_CD.md).
+included in backups. **Policies** hold the installation and per-project minimums, and
+**Decisions** lists every recorded gate with its policy versions, input hashes, scanner
+versions, and the exceptions that applied. See [CI/CD integration](docs/CI_CD.md).
 
 ## Notifications, monitoring, and finding decisions
 

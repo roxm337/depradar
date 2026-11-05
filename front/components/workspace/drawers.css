@@ -1,0 +1,70 @@
+/* Drawers, dialogs, and the few shared pieces the workspace pages reuse. Tokens only. */
+
+.tag-bad { background: var(--critical-soft); color: var(--critical); }
+.tag-info { background: var(--accent-soft); color: var(--accent-text); }
+.tag-muted { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text-3); }
+.field-error { font-size: 12px; color: var(--critical); display: flex; align-items: center; gap: 6px; }
+.input[aria-invalid="true"], .select[aria-invalid="true"], .textarea[aria-invalid="true"] { border-color: var(--critical); }
+.input[aria-invalid="true"]:focus, .textarea[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--critical) 22%, transparent); }
+.dropzone:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Long dialogs scroll their body so the title and actions stay in view. */
+.dialog-scroll { max-height: min(64vh, 660px); overflow-y: auto; padding-bottom: 14px; }
+
+/* Header */
+.drawer-head:not(:has(.drawer-tabs)) { padding-bottom: 14px; }
+.drawer-top { flex-wrap: wrap; }
+.drawer-summary { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--text-3); }
+.drawer-summary b { color: var(--text-2); font-weight: 550; }
+
+/* Sections */
+.drawer-body .block { gap: 10px; }
+.drawer-card { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 0 14px; display: grid; }
+.drawer-card > .toggle-row:first-child { border-top: 0; }
+.drawer-card > .field { padding: 12px 0; border-top: 1px solid var(--line); }
+.drawer-card > .field-hint { padding-bottom: 12px; }
+.drawer-card > .field:first-child { border-top: 0; }
+.block-title .block-count { margin-left: auto; font-weight: 450; }
+.priority-row { align-items: center; }
+.priority-row .cell-main { gap: 2px; }
+.priority-row .cell-main small { font-family: var(--data); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.priority-row > svg:last-child { color: var(--text-3); flex: none; }
+
+/* Remediation */
+.version-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line-strong); font-family: var(--data); font-size: 12px; color: var(--text); transition: background 0.12s, border-color 0.12s; }
+.version-chip:hover { background: var(--surface-2); border-color: var(--text-4); }
+.version-chip svg { color: var(--text-3); }
+.version-chip.is-copied { border-color: var(--ok); color: var(--ok); }
+.version-chip.is-copied svg { color: var(--ok); }
+.fix .field-hint { color: var(--text-3); }
+
+/* Exploitability */
+.meter-track i { min-width: 2px; }
+.epss-value { font-variant-numeric: tabular-nums; }
+
+/* Decisions timeline */
+.timeline-item .timeline-note { color: var(--text-2); }
+.timeline-item small { display: block; margin-top: 1px; color: var(--text-3); font-size: 12px; }
+
+/* Manifests */
+.manifest-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); align-items: center; }
+.manifest-row:last-child { border-bottom: 0; }
+.manifest-path { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--data); font-size: 12.5px; font-weight: 500; overflow-wrap: anywhere; }
+.manifest-path svg { flex: none; color: var(--text-3); }
+.manifest-meta { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 12px; color: var(--text-3); }
+.manifest-meta .status { color: var(--text-2); font-size: 12px; }
+.manifest-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 6px; align-items: center; }
+.manifest-row.is-retired { opacity: 0.8; }
+
+/* Scans */
+.drawer-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.drawer .table th { position: static; }
+.drawer .table td { height: 38px; }
+.drawer .table th:first-child { border-top-left-radius: 0; }
+.drawer .table th:last-child { border-top-right-radius: 0; }
+.drawer .table .cell-main { padding: 5px 0; }
+.drawer .table .scan-note { white-space: normal; max-width: 34ch; }
+
+@media (max-width: 720px) {
+  .manifest-row { grid-template-columns: minmax(0, 1fr); }
+  .manifest-actions { grid-column: 1; grid-row: auto; }
+}

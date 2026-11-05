@@ -1,6 +1,7 @@
 # DepRadar gating its own dependencies with the bundled action.
-# Enable it by adding a DEPRADAR_URL repository variable and a DEPRADAR_TOKEN secret. The server
-# must be reachable from the runner; use a self-hosted runner for a private-network instance.
+# Enable it by adding a DEPRADAR_URL repository variable, then either trust this repository under
+# Settings → Trusted identities (OIDC, no secret) or add a DEPRADAR_TOKEN secret. The server must
+# be reachable from the runner; use a self-hosted runner for a private-network instance.
 name: Dependency gate
 on:
   push:
@@ -19,6 +20,10 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      # Lets the action prove this job's identity to DepRadar instead of using a stored token.
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:

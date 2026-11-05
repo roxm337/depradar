@@ -211,7 +211,14 @@ def test_retention_keeps_each_monorepo_manifest_and_prunes_old_checks(
         assert db.scalar(select(Scan).where(Scan.inventory_id == check_id)) is None
 
 
+def as_revision_0005(database: dict, manifest: dict) -> None:
+    for table in ("trusted_identity", "security_policy", "gate_decision"):
+        del database[table], manifest["row_counts"][table]
+    manifest["revision"] = "0005"
+
+
 def as_revision_0004(database: dict, manifest: dict) -> None:
+    as_revision_0005(database, manifest)
     for row in database["inventory"]:
         del row["retired_at"]
     manifest["revision"] = "0004"
@@ -227,7 +234,7 @@ def as_revision_0003(database: dict, manifest: dict) -> None:
     manifest["revision"] = "0003"
 
 
-@pytest.mark.parametrize("legacy_revision", [as_revision_0003, as_revision_0004])
+@pytest.mark.parametrize("legacy_revision", [as_revision_0003, as_revision_0004, as_revision_0005])
 def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
     harness: Harness, project_id: str, tmp_path: Path, legacy_revision
 ) -> None:
@@ -242,7 +249,7 @@ def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
     assert created.status_code == 201
     current = tmp_path / "current.tar.gz"
     manifest = create_backup(harness.factory, harness.settings.storage_dir, current)
-    assert manifest["revision"] == "0005" and manifest["row_counts"]["api_token"] == 0
+    assert manifest["revision"] == "0006" and manifest["row_counts"]["api_token"] == 0
     # Rewrite the populated archive as the older revision would have produced it.
     legacy = tmp_path / "legacy.tar.gz"
     with tarfile.open(current, "r:gz") as source, tarfile.open(legacy, "w:gz") as target:
@@ -259,7 +266,7 @@ def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
             target.addfile(info, io.BytesIO(content))
     engine, factory = empty_database()
     restored = restore_backup(factory, tmp_path / "restored", legacy)
-    assert restored["revision"] == "0005"
+    assert restored["revision"] == "0006"
     with factory() as db:
         assert {scan.mode for scan in db.scalars(select(Scan))} == {"monitor"}
         inventory = db.scalars(select(Inventory)).one()

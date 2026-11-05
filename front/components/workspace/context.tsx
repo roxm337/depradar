@@ -2,18 +2,32 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, json, setCsrfToken, UNAUTHORIZED_EVENT, type ApiToken, type Connector, type CreatedApiToken, type Delivery, type DeliveryAttempt, type Finding, type FindingDecision, type Inventory, type NotificationPolicy, type OperationsHealth, type Project, type RetentionPolicy, type Scan } from "@/lib/api";
+import { api, ApiError, json, setCsrfToken, UNAUTHORIZED_EVENT, type ApiToken, type Connector, type CreatedApiToken, type DecisionDetail, type DecisionSummary, type Delivery, type DeliveryAttempt, type Finding, type FindingDecision, type Identities, type IdentityInput, type Inventory, type NotificationPolicy, type OperationsHealth, type Policies, type PolicyRules, type PolicyVersion, type Project, type ReportFormat, type RetentionPolicy, type Scan, type TrustedIdentity } from "@/lib/api";
 import { supportedInventory } from "@/components/workspace/format";
+import { defaultFilters, type FindingFilters } from "@/components/workspace/findings-logic";
+import { DEFAULT_RULES, normalizeRules, reportFile } from "@/components/workspace/policy-logic";
 
 export type Session = "checking" | "ready" | "offline";
 export type Notice = { kind: "success" | "error" | "info"; text: string } | null;
 export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
-export type Filters = { status: "open" | "resolved" | "all"; severities: string[]; decision: string; project: string; sort: "priority" | "newest" | "package" };
+export type Filters = FindingFilters;
 export type EmailInput = { host: string; port: number; username: string; sender: string; recipient: string; tls_mode: string };
 export type UploadInput = { projectId: string; file: File; targetPath: string; revision: string };
 
-const defaultFilters: Filters = { status: "open", severities: [], decision: "all", project: "all", sort: "priority" };
 const defaultPolicy: NotificationPolicy = { immediate_min_severity: "high", timezone: "UTC", digest_hour: 8, include_details: false, quiet_hours_start: null, quiet_hours_end: null };
+const defaultPolicies: Policies = { installation: { id: null, scope: "installation", project_id: null, version: 0, rules: DEFAULT_RULES, note: "", created_at: null }, projects: [] };
+const DECISION_PAGE = 100;
+
+/** Which milestone endpoints the API answered; an older build renders the pages with an upgrade note. */
+export type Features = { decisions: boolean; policies: boolean; identities: boolean };
+
+// An endpoint this API build does not have answers 404 or 405; anything else is a real failure.
+const missing = (failure: unknown) => failure instanceof ApiError && (failure.status === 404 || failure.status === 405);
+
+function normalizePolicies(value: Policies): Policies {
+  const version = (row: PolicyVersion): PolicyVersion => ({ ...row, rules: row.rules ? normalizeRules(row.rules) : row.scope === "installation" ? DEFAULT_RULES : null, note: row.note ?? "" });
+  return { installation: version(value.installation), projects: (value.projects ?? []).map((row) => ({ ...row, policy: version(row.policy), effective: normalizeRules(row.effective) })) };
+}
 
 async function loadAllPages<T>(fetchPage: (offset: number) => Promise<T[]>): Promise<T[]> {
   const rows: T[] = [];
@@ -55,6 +69,10 @@ function useWorkspaceState() {
   const [retention, setRetention] = useState<RetentionPolicy>({ scan_days: 30, delivery_days: 30 });
   const [health, setHealth] = useState<OperationsHealth | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
+  const [decisions, setDecisions] = useState<DecisionSummary[]>([]);
+  const [policies, setPolicies] = useState<Policies>(defaultPolicies);
+  const [identities, setIdentities] = useState<Identities>({ audience: "", identities: [] });
+  const [features, setFeatures] = useState<Features>({ decisions: true, policies: true, identities: true });
   const [notice, setNotice] = useState<Notice>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [findingId, setFindingId] = useState<string | null>(null);
@@ -79,7 +97,10 @@ function useWorkspaceState() {
       signedIn = true;
       setSession("ready");
       const projectRows = await loadAllPages<Project>((offset) => api<Project[]>(`projects?limit=100&offset=${offset}`));
-      const [findingRows, scanRows, inventoryRows, connectorRows, deliveryRows, policyValue, retentionValue, healthValue, tokenRows] = await Promise.all([
+      const available: Features = { decisions: true, policies: true, identities: true };
+      // Milestone endpoints degrade on their own: an older API still renders the rest of the workspace.
+      const optional = <T,>(key: keyof Features, request: Promise<T>, fallback: T) => request.catch((failure) => { if (missing(failure)) available[key] = false; return fallback; });
+      const [findingRows, scanRows, inventoryRows, connectorRows, deliveryRows, policyValue, retentionValue, healthValue, tokenRows, decisionRows, policyRows, identityRows] = await Promise.all([
         mapInBatches(projectRows, 8, (project) => loadAllPages<Finding>((offset) => api<Finding[]>(`projects/${project.id}/findings?limit=100&offset=${offset}`))),
         mapInBatches(projectRows, 8, (project) => loadAllPages<Scan>((offset) => api<Scan[]>(`projects/${project.id}/scans?limit=100&offset=${offset}`))),
         mapInBatches(projectRows, 8, async (project) => {
@@ -92,6 +113,9 @@ function useWorkspaceState() {
         api<RetentionPolicy>("maintenance/retention"),
         api<OperationsHealth>("operations/health").catch(() => null),
         api<ApiToken[]>("tokens").catch(() => [] as ApiToken[]),
+        optional("decisions", api<DecisionSummary[]>(`ci/decisions?limit=${DECISION_PAGE}`), [] as DecisionSummary[]),
+        optional("policies", api<Policies>("policies").then(normalizePolicies), defaultPolicies),
+        optional("identities", api<Identities>("identities"), { audience: "", identities: [] } as Identities),
       ]);
       setProjects(projectRows.map((project) => ({ ...project, notifications_enabled: project.notifications_enabled ?? true, alert_min_severity: project.alert_min_severity ?? null })));
       setFindings(findingRows.flat().map((finding) => ({ ...finding, target_path: finding.target_path ?? finding.target_filename, revision: finding.revision ?? null, purl: finding.purl ?? null, cvss_vectors: finding.cvss_vectors ?? [], epss_score: finding.epss_score ?? null, epss_percentile: finding.epss_percentile ?? null, kev_known: finding.kev_known ?? false, intel_updated_at: finding.intel_updated_at ?? null })));
@@ -103,6 +127,10 @@ function useWorkspaceState() {
       setRetention(retentionValue);
       setHealth(healthValue);
       setTokens(tokenRows);
+      setDecisions(decisionRows);
+      setPolicies(policyRows);
+      setIdentities(identityRows);
+      setFeatures(available);
       setError("");
       setDataFailed(false);
       setSyncedAt(new Date().toISOString());
@@ -216,6 +244,20 @@ function useWorkspaceState() {
     rescanAll: (inventoryIds: string[], label: string) => run(() => Promise.all(inventoryIds.map((id) => api(`inventories/${id}/scans`, json("POST", {})))), `${inventoryIds.length} scans queued for ${label}.`),
     setMonitoring: (project: Project, enabled: boolean, hours: number) => run(() => api(`projects/${project.id}/monitoring`, json("PUT", { enabled, interval_hours: hours })), enabled ? `Monitoring ${project.name} every ${hours}h.` : `Monitoring paused for ${project.name}.`),
     setAlerts: (project: Project, enabled: boolean, threshold: string) => run(() => api(`projects/${project.id}/notifications`, json("PUT", { enabled, immediate_min_severity: threshold })), `Alert settings saved for ${project.name}.`),
+    // Acknowledges many findings in batches, reloads once, and reports how many did not go through.
+    bulkAcknowledge: async (targets: Finding[]) => {
+      let done = 0;
+      let reason = "";
+      await mapInBatches(targets, 5, async (finding) => {
+        try { await api(`findings/${finding.id}/acknowledge`, json("POST", { note: "" })); done += 1; }
+        catch (failure) { reason = reason || message(failure, "Request failed."); }
+      });
+      const failed = targets.length - done;
+      if (done) await load();
+      if (!failed) notify("success", `${done} finding${done === 1 ? "" : "s"} acknowledged.`);
+      else notify(done ? "info" : "error", `${done} acknowledged, ${failed} could not be: ${reason}`);
+      return { done, failed };
+    },
     acknowledge: (finding: Finding) => run(() => api(`findings/${finding.id}/acknowledge`, json("POST", { note: "" })), `${finding.package_name} acknowledged.`),
     acceptRisk: (finding: Finding, reason: string, expiresAt: string) => run(() => api(`findings/${finding.id}/risk-acceptance`, json("POST", { reason, expires_at: expiresAt })), "Risk acceptance recorded."),
     clearDecision: (finding: Finding) => run(() => api(finding.workflow_status === "risk_accepted" ? `findings/${finding.id}/risk-acceptance` : `findings/${finding.id}/acknowledge`, { method: "DELETE" }), "Decision cleared; the finding needs review again."),
@@ -250,11 +292,60 @@ function useWorkspaceState() {
       catch (failure) { notify("error", message(failure, "Could not create the token.")); return null; }
     },
     revokeToken: (token: ApiToken) => run(() => api(`tokens/${token.id}`, { method: "DELETE" }), `${token.name} revoked.`),
+    saveInstallationPolicy: async (rules: PolicyRules, note: string) => {
+      try {
+        const saved = await api<PolicyVersion>("policies/installation", json("PUT", { rules, note }));
+        notify("success", `Installation policy saved as version ${saved.version}. It applies to the next gate decision.`);
+        await load();
+        return true;
+      } catch (failure) { notify("error", message(failure, "Could not save the installation policy.")); return false; }
+    },
+    saveProjectPolicy: async (project: Project, rules: PolicyRules | null, note: string) => {
+      try {
+        const saved = await api<PolicyVersion>(`policies/projects/${project.id}`, json("PUT", { rules, note }));
+        notify("success", rules ? `Policy for ${project.name} saved as version ${saved.version}.` : `${project.name} now follows the installation policy.`);
+        await load();
+        return true;
+      } catch (failure) { notify("error", message(failure, "Could not save the project policy.")); return false; }
+    },
+    loadPolicyVersions: (projectId: string | null) => api<PolicyVersion[]>(`policies/versions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`).then((rows) => rows.map((row) => ({ ...row, rules: row.rules ? normalizeRules(row.rules) : null }))),
+    loadDecision: (id: string) => api<DecisionDetail>(`ci/decisions/${encodeURIComponent(id)}`),
+    // Reports render from the stored decision, so the download always matches what the pipeline saw.
+    downloadDecisionReport: async (id: string, format: ReportFormat) => {
+      try {
+        const response = await fetch(`/api/backend/ci/decisions/${encodeURIComponent(id)}?format=${format}`, { credentials: "same-origin", cache: "no-store" });
+        if (response.status === 401) { window.dispatchEvent(new Event(UNAUTHORIZED_EVENT)); return false; }
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { detail?: string };
+          throw new ApiError(payload.detail || `Request failed (${response.status})`, response.status);
+        }
+        const file = reportFile(id, format);
+        const url = URL.createObjectURL(new Blob([await response.text()], { type: file.type }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return true;
+      } catch (failure) { notify("error", message(failure, "Could not download the report.")); return false; }
+    },
+    createIdentity: async (input: IdentityInput) => {
+      try {
+        const created = await api<TrustedIdentity>("identities", json("POST", input));
+        notify("success", `${created.repository} can now sign in to DepRadar from its pipeline.`);
+        await load();
+        return created;
+      } catch (failure) { notify("error", message(failure, "Could not add the trusted identity.")); return null; }
+    },
+    removeIdentity: (identity: TrustedIdentity) => run(() => api(`identities/${identity.id}`, { method: "DELETE" }), `${identity.repository} can no longer exchange pipeline identities.`),
   };
 
   return {
     session, loading, ready, error, dataFailed, upgradeHint, syncedAt, now, origin,
     projects, findings, scans, inventories, connectors, deliveries, policy, retention, health, tokens,
+    decisions, policies, identities, features,
     notice, setNotice, notify, modal, setModal, findingId, setFindingId, projectId, setProjectId,
     query, setQuery, filters, setFilters, reload: load, actions,
   };

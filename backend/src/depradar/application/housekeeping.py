@@ -1,9 +1,9 @@
 """Project deletion, retention of old history, and cleanup of stored manifests."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from depradar.application.errors import Conflict
@@ -16,13 +16,16 @@ from depradar.domain.entities import (
     FileDeletion,
     Finding,
     FindingDecision,
+    GateDecision,
     Inventory,
     Job,
     Observation,
     OutboxEvent,
     Project,
     Scan,
+    SecurityPolicy,
     SystemState,
+    TrustedIdentity,
     utcnow,
 )
 
@@ -91,6 +94,9 @@ def purge_project(db: Session, project: Project, dashboard_url: str = "") -> Non
     db.execute(delete(Scan).where(Scan.id.in_(scans)))
     # Never detach restricted tokens: a token without its project would become unrestricted.
     db.execute(delete(ApiToken).where(ApiToken.project_id == project.id))
+    db.execute(delete(TrustedIdentity).where(TrustedIdentity.project_id == project.id))
+    db.execute(delete(SecurityPolicy).where(SecurityPolicy.project_id == project.id))
+    db.execute(delete(GateDecision).where(GateDecision.project_id == project.id))
     for inventory in db.scalars(select(Inventory).where(Inventory.project_id == project.id)):
         if db.get(FileDeletion, inventory.id) is None:
             db.add(FileDeletion(inventory_id=inventory.id))
@@ -173,9 +179,33 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
         db.flush()
         db.add(FileDeletion(inventory_id=inventory.id))
         db.delete(inventory)
+    prune_decisions(db, scan_cutoff)
+    # Exchanged identity tokens live 30 minutes; keep a day for troubleshooting, then drop them.
+    db.execute(
+        delete(ApiToken).where(
+            ApiToken.kind == "identity", ApiToken.expires_at < utcnow() - timedelta(days=1)
+        )
+    )
     state.last_housekeeping_at = utcnow()
     db.flush()
     return {"files_removed": collect_files(db, store, orphans=True)}
+
+
+def prune_decisions(db: Session, cutoff: datetime) -> None:
+    """Gate decisions follow scan retention; each project keeps its most recent decision."""
+    newest = (
+        select(GateDecision.project_id, func.max(GateDecision.created_at).label("latest"))
+        .group_by(GateDecision.project_id)
+        .subquery()
+    )
+    kept = select(GateDecision.id).join(
+        newest,
+        (GateDecision.project_id == newest.c.project_id)
+        & (GateDecision.created_at == newest.c.latest),
+    )
+    db.execute(
+        delete(GateDecision).where(GateDecision.created_at < cutoff, GateDecision.id.not_in(kept))
+    )
 
 
 def retention_settings(db: Session) -> SystemState:

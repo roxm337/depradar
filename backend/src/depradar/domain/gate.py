@@ -11,6 +11,7 @@ from depradar.domain.entities import Finding, Inventory, Project, Scan
 Threshold = Literal["none", "low", "medium", "high", "critical"]
 GateStatus = Literal["pass", "fail", "error"]
 Outcome = Literal["violation", "ignored", "below_threshold"]
+PolicyScope = Literal["installation", "project"]
 LEVELS = ["unknown", "low", "medium", "high", "critical"]
 FINISHED = {"succeeded", "partial", "failed", "superseded"}
 
@@ -30,6 +31,37 @@ class GatePolicy(BaseModel):
     fail_on_incomplete: bool = Field(
         default=False, description="Fail when scanner coverage is partial."
     )
+    require_monitored_manifests: bool = Field(
+        default=False,
+        description="Fail unless every monitored manifest of the project is part of the gate.",
+    )
+
+
+class PolicySource(BaseModel):
+    """A central policy version that applied to a decision."""
+
+    scope: PolicyScope
+    project_id: str | None
+    version: int
+    policy_id: str | None
+
+    def label(self) -> str:
+        return f"{self.scope} policy v{self.version}"
+
+
+class PolicyAdjustment(BaseModel):
+    """Where a central policy overrode what the pipeline asked for."""
+
+    rule: str
+    requested: str
+    enforced: str
+    source: str
+
+
+class MissingManifest(BaseModel):
+    project_id: str
+    project_name: str
+    target_path: str
 
 
 class GateItem(BaseModel):
@@ -68,9 +100,17 @@ class ScanGate(BaseModel):
 
 
 class GateResult(BaseModel):
+    decision_id: str | None = None
     status: GateStatus
     evaluated_at: datetime
-    policy: GatePolicy
+    policy: GatePolicy = Field(description="The enforced policy.")
+    requested_policy: GatePolicy | None = Field(
+        default=None, description="What the pipeline asked for, before central policies."
+    )
+    policy_sources: list[PolicySource] = []
+    adjustments: list[PolicyAdjustment] = []
+    missing_manifests: list[MissingManifest] = []
+    reasons: list[str] = Field(default=[], description="Reasons that apply to the whole gate.")
     violations: int
     ignored: int
     below_threshold: int
@@ -189,13 +229,48 @@ def scan_gate(
     return gate("fail" if failed else "pass", None, items)
 
 
-def gate_result(gates: list[ScanGate], policy: GatePolicy, now: datetime) -> GateResult:
+def missing_manifests(
+    gates: list[ScanGate], monitored: dict[str, tuple[str, list[str]]]
+) -> list[MissingManifest]:
+    """Monitored manifests ({project ID: (name, paths)}) that no scan in the gate covered."""
+    covered = {(gate.project_id, gate.target_path) for gate in gates}
+    return [
+        MissingManifest(project_id=project_id, project_name=name, target_path=path)
+        for project_id, (name, paths) in sorted(monitored.items())
+        for path in sorted(paths)
+        if (project_id, path) not in covered
+    ]
+
+
+def gate_result(
+    gates: list[ScanGate],
+    policy: GatePolicy,
+    now: datetime,
+    *,
+    requested: GatePolicy | None = None,
+    sources: list[PolicySource] | None = None,
+    adjustments: list[PolicyAdjustment] | None = None,
+    missing: list[MissingManifest] | None = None,
+) -> GateResult:
+    """Combine scan gates. A required manifest that was not scanned can never pass."""
     items = [item for gate in gates for item in gate.items]
     statuses = {gate.status for gate in gates}
+    missing = missing or []
+    reasons = [
+        f"Required manifest {entry.target_path} in {entry.project_name} was not scanned"
+        for entry in missing
+    ]
+    if missing:
+        statuses.add("fail")
     return GateResult(
         status="error" if "error" in statuses else "fail" if "fail" in statuses else "pass",
         evaluated_at=now,
         policy=policy,
+        requested_policy=requested or policy,
+        policy_sources=sources or [],
+        adjustments=adjustments or [],
+        missing_manifests=missing,
+        reasons=reasons,
         violations=sum(item.outcome == "violation" for item in items),
         ignored=sum(item.outcome == "ignored" for item in items),
         below_threshold=sum(item.outcome == "below_threshold" for item in items),

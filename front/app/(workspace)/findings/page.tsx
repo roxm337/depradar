@@ -3,15 +3,14 @@
 import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace, type Filters } from "@/components/workspace/context";
-import { byPriority, primaryAdvisory, relativeTime, SEVERITIES, severityOf } from "@/components/workspace/format";
+import { filterFindings, sortFindings, type Sort } from "@/components/workspace/findings-logic";
+import { primaryAdvisory, relativeTime, SEVERITIES, severityOf } from "@/components/workspace/format";
 import { Empty, PageHead, Pkg, Segmented, Sev, Sheet, SkeletonRows } from "@/components/workspace/ui";
 import type { Finding } from "@/lib/api";
 
-const sorters: Record<Filters["sort"], (a: Finding, b: Finding) => number> = {
-  priority: byPriority,
-  newest: (a, b) => Date.parse(b.first_seen_at) - Date.parse(a.first_seen_at),
-  package: (a, b) => a.package_name.localeCompare(b.package_name) || a.package_version.localeCompare(b.package_version),
-};
+// The three orders this page offers, expressed in the shared sort model.
+const SORTS: Record<string, Sort> = { priority: { key: "priority", dir: "desc" }, newest: { key: "age", dir: "asc" }, package: { key: "package", dir: "asc" } };
+const sortName = (sort: Sort) => Object.keys(SORTS).find((name) => SORTS[name].key === sort.key && SORTS[name].dir === sort.dir) ?? "priority";
 const decisions: Record<string, string> = { open: "Needs review", acknowledged: "Acknowledged", risk_accepted: "Risk accepted" };
 
 export default function FindingsPage() {
@@ -21,12 +20,7 @@ export default function FindingsPage() {
   const names = new Map(projects.map((project) => [project.id, project.name]));
   const byStatus = (finding: Finding) => filters.status === "all" || finding.status === filters.status;
   const search = query.trim().toLowerCase();
-  const visible = findings.filter((finding) => byStatus(finding)
-    && (!filters.severities.length || filters.severities.includes(severityOf(finding.severity)))
-    && (filters.decision === "all" || finding.workflow_status === filters.decision)
-    && (filters.project === "all" || finding.project_id === filters.project)
-    && (!search || [finding.package_name, finding.package_version, finding.summary, finding.ecosystem, finding.target_path, names.get(finding.project_id) ?? "", ...finding.advisory_ids].some((value) => value.toLowerCase().includes(search))),
-  ).sort(sorters[filters.sort]);
+  const visible = sortFindings(filterFindings(findings, filters, query, names), filters.sort, names);
   const statusCounts = { open: findings.filter((finding) => finding.status === "open").length, resolved: findings.filter((finding) => finding.status === "resolved").length, all: findings.length };
   const update = (patch: Partial<Filters>) => { setFilters({ ...filters, ...patch }); setLimit(100); };
   const filtered = Boolean(search) || filters.severities.length > 0 || filters.decision !== "all" || filters.project !== "all";
@@ -39,7 +33,7 @@ export default function FindingsPage() {
         <label className="search"><Icon name="search" size={16}/><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(100); }} placeholder="Package, advisory, project, or path" aria-label="Filter findings"/></label>
         <select className="select" aria-label="Decision" value={filters.decision} onChange={(event) => update({ decision: event.target.value })}><option value="all">Any decision</option><option value="open">Needs review</option><option value="acknowledged">Acknowledged</option><option value="risk_accepted">Risk accepted</option></select>
         <select className="select" aria-label="Project" value={filters.project} onChange={(event) => update({ project: event.target.value })}><option value="all">All projects</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
-        <select className="select" aria-label="Sort" value={filters.sort} onChange={(event) => update({ sort: event.target.value as Filters["sort"] })}><option value="priority">Sort by priority</option><option value="newest">Newest first</option><option value="package">Package name</option></select>
+        <select className="select" aria-label="Sort" value={sortName(filters.sort)} onChange={(event) => update({ sort: SORTS[event.target.value] ?? SORTS.priority })}><option value="priority">Sort by priority</option><option value="newest">Newest first</option><option value="package">Package name</option></select>
       </div>
       <div className="toolbar">
         <div className="chips" role="group" aria-label="Severity">{SEVERITIES.map((level) => {

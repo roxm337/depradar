@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from depradar.application.locking import lock_writes
 from depradar.domain.entities import Base, Inventory, UtcTimestamp, utcnow
 
-REVISION = "0005"
+REVISION = "0006"
 MAX_BACKUP_BYTES = 2 * 1024 * 1024 * 1024
 # Credentials are never archived: a restore must not resurrect a token revoked after the backup.
 CREDENTIAL_TABLES = {"owner_session", "api_token"}
@@ -48,6 +48,8 @@ V2_ADDED_TABLES = {"threat_intel", "delivery_attempt"}
 V3_ADDED_COLUMNS = {"inventory": {"kind"}, "scan": {"mode", "results"}}
 V3_ADDED_TABLES = {"api_token"}
 V4_ADDED_COLUMNS = {"inventory": {"retired_at"}}
+V5_ADDED_TABLES = {"trusted_identity", "security_policy", "gate_decision"}
+V5_ADDED_COLUMNS = {"api_token": {"kind", "identity_id", "claims"}}
 
 
 def encode(value: Any) -> str:
@@ -103,11 +105,17 @@ def upgrade_v4_rows(database: dict[str, Any]) -> None:
         row.update(retired_at=None)
 
 
+def upgrade_v5_rows(database: dict[str, Any]) -> None:
+    # Only the new tables changed; API tokens are never archived.
+    return None
+
+
 # (revision, tables added after it, columns added after it, defaults for the added columns)
 UPGRADES = [
     ("0002", V2_ADDED_TABLES, V2_ADDED_COLUMNS, upgrade_v2_rows),
     ("0003", V3_ADDED_TABLES, V3_ADDED_COLUMNS, upgrade_v3_rows),
     ("0004", set(), V4_ADDED_COLUMNS, upgrade_v4_rows),
+    ("0005", V5_ADDED_TABLES, V5_ADDED_COLUMNS, upgrade_v5_rows),
 ]
 
 

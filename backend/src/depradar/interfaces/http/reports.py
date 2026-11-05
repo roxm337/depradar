@@ -96,12 +96,31 @@ def policy_text(policy: GatePolicy) -> str:
         rules.append(f"EPSS >= {policy.epss_threshold:g}")
     if policy.fail_on_incomplete:
         rules.append("incomplete coverage")
+    if policy.require_monitored_manifests:
+        rules.append("missing monitored manifests")
     scope = "new findings only" if policy.new_only else "all open findings"
     return f"fail on {', '.join(rules) or 'nothing'} ({scope})"
 
 
+def sources_text(result: GateResult) -> str:
+    return ", ".join(source.label() for source in result.policy_sources)
+
+
+def adjustment_text(result: GateResult) -> list[str]:
+    return [
+        f"{change.rule}: {change.requested} → {change.enforced} ({change.source})"
+        for change in result.adjustments
+    ]
+
+
 def render_sarif(result: GateResult, lines: Callable[[ScanGate], LineFinder]) -> str:
     runs = []
+    # Gate-wide reasons belong to every run, so each code scanning category explains a failure.
+    gate_notes: list[dict[str, object]] = []
+    for reason in result.reasons:
+        gate_notes.append({"message": {"text": reason}, "level": "error"})
+    for text in adjustment_text(result):
+        gate_notes.append({"message": {"text": "Central policy enforced " + text}, "level": "note"})
     for gate in result.scans:
         line_for = lines(gate)
         rules: dict[str, dict[str, object]] = {}
@@ -158,6 +177,7 @@ def render_sarif(result: GateResult, lines: Callable[[ScanGate], LineFinder]) ->
         notifications: list[dict[str, object]] = [
             {"message": {"text": note}} for note in gate.coverage_notes
         ]
+        notifications += gate_notes
         if gate.error:
             notifications.append({"message": {"text": gate.error}, "level": "error"})
         runs.append(
@@ -222,6 +242,21 @@ def render_junit(result: GateResult) -> str:
                 ElementTree.SubElement(coverage, "system-out").text = notes
         if not gate.items and not gate.error:
             _testcase(suite, gate, "no known vulnerabilities")
+    if result.missing_manifests:
+        suite = ElementTree.SubElement(suites, "testsuite", name="DepRadar required manifests")
+        for entry in result.missing_manifests:
+            testcase = ElementTree.SubElement(
+                suite,
+                "testcase",
+                classname=_xml("depradar." + entry.target_path),
+                name=_xml(f"{entry.target_path} was scanned"),
+            )
+            ElementTree.SubElement(
+                testcase,
+                "failure",
+                message=_xml(f"Required manifest {entry.target_path} was not scanned"),
+                type="missing-manifest",
+            )
     for element in [*suites, suites]:
         cases = element.iter("testcase")
         counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
@@ -252,6 +287,15 @@ def render_markdown(result: GateResult, limit: int = 50) -> str:
         f"policy: {_md(policy_text(result.policy))}",
         "",
     ]
+    if result.policy_sources:
+        lines += [f"Central policy: {_md(sources_text(result))}", ""]
+    if result.adjustments:
+        lines += ["**Enforced by central policy** (the pipeline asked for less):", ""]
+        lines += [f"- {_md(text)}" for text in adjustment_text(result)]
+        lines.append("")
+    if result.reasons:
+        lines += [f"- **{_md(reason)}**" for reason in result.reasons]
+        lines.append("")
     for gate in result.scans:
         lines.append(
             f"- `{gate.mode}` scan of {_md(gate.target_path)} in {_md(gate.project_name)}: "
@@ -288,6 +332,8 @@ def render_markdown(result: GateResult, limit: int = 50) -> str:
     notes = sorted({note for gate in result.scans for note in gate.coverage_notes})
     if notes:
         lines += ["", "**Coverage notes:** " + _md("; ".join(notes))]
+    if result.decision_id:
+        lines += ["", f"Decision `{result.decision_id}` is recorded in DepRadar."]
     return "\n".join(lines) + "\n"
 
 

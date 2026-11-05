@@ -1,28 +1,21 @@
 import type { ReactNode } from "react";
 import { Icon } from "@/components/icon";
-import { Radar } from "@/components/radar";
-
-const points = ["Isolated OSV scans with CISA KEV and EPSS context", "Pull request gates with SARIF, JUnit, and Markdown reports", "Self-hosted: inventories and credentials stay on your server"];
 
 export function Brand() {
-  return <div className="rail-brand"><span className="brand-mark"><span className="brand-glyph"/></span><span>dep<span>radar</span></span></div>;
+  return (
+    <div className="brand">
+      <svg className="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="m12 12 6.4-6.4"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>
+      <span className="brand-word">dep<span>radar</span></span>
+    </div>
+  );
 }
 
 export function AuthShell({ children }: { children: ReactNode }) {
   return (
     <main className="auth-shell">
-      <aside className="auth-aside">
-        <Brand/>
-        <div className="auth-pitch">
-          <span className="eyebrow">Dependency security</span>
-          <h1>See which client projects are exposed, and why.</h1>
-          <p>DepRadar watches the lockfiles of every project you maintain, gates pull requests in CI/CD, and alerts you by email and Telegram.</p>
-          <ul className="auth-points">{points.map((point) => <li key={point}><Icon name="check" size={15}/>{point}</li>)}</ul>
-        </div>
-        <Radar className="auth-radar" blips={[{ id: "a1", severity: "critical" }, { id: "b7", severity: "high" }, { id: "c3", severity: "medium" }, { id: "d9", severity: "low" }, { id: "e2", severity: "high" }]}/>
-        <span className="auth-foot">OSV · CISA KEV · FIRST EPSS</span>
-      </aside>
-      <section className="auth-main"><div className="auth-card">{children}</div></section>
+      <Brand/>
+      <div className="auth-card">{children}</div>
+      <p className="auth-foot">Self-hosted. Your inventories and credentials stay on your server.</p>
     </main>
   );
 }

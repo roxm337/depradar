@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/icon";
 import { SEVERITIES, severityOf, type Severity } from "@/components/workspace/format";
 
-export function PageHead({ eyebrow, title, lede, actions }: { eyebrow: string; title: string; lede?: ReactNode; actions?: ReactNode }) {
+export function PageHead({ eyebrow, title, lede, actions }: { eyebrow?: string; title: string; lede?: ReactNode; actions?: ReactNode }) {
   return (
     <header className="page-head">
-      <div><span className="eyebrow">{eyebrow}</span><h1 className="page-title">{title}</h1>{lede && <p className="lede">{lede}</p>}</div>
+      <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h1 className="page-title">{title}</h1>{lede && <p className="lede">{lede}</p>}</div>
       {actions && <div className="page-actions">{actions}</div>}
     </header>
   );
@@ -36,8 +36,58 @@ export function StackBar({ counts, total }: { counts: Record<Severity, number>; 
   return <span className="stack" role="img" aria-label={SEVERITIES.map((level) => `${counts[level]} ${level}`).join(", ")}>{total ? SEVERITIES.filter((level) => counts[level]).map((level) => <i key={level} className={`bar-${level}`} style={{ width: `${(counts[level] / total) * 100}%` }}/>) : null}</span>;
 }
 
-export function Empty({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
-  return <div className="empty"><span className="empty-glyph" aria-hidden="true"/><b>{title}</b><p>{text}</p>{action}</div>;
+export function Empty({ title, text, action, icon = "inbox" }: { title: string; text: string; action?: ReactNode; icon?: string }) {
+  return <div className="empty"><span className="empty-glyph" aria-hidden="true"><Icon name={icon} size={20}/></span><b>{title}</b><p>{text}</p>{action}</div>;
+}
+
+export function Kbd({ children }: { children: ReactNode }) {
+  return <kbd>{children}</kbd>;
+}
+
+export function Checkbox({ checked, indeterminate = false, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: (checked: boolean) => void; label: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (input.current) input.current.indeterminate = indeterminate && !checked; }, [indeterminate, checked]);
+  return <span className="check"><input ref={input} type="checkbox" checked={checked} aria-label={label} onChange={(event) => onChange(event.target.checked)} onClick={(event) => event.stopPropagation()}/><i><Icon name={indeterminate && !checked ? "minus" : "check"} size={12}/></i></span>;
+}
+
+type MenuTrigger = { open: boolean; toggle: () => void; props: { "aria-haspopup": "menu"; "aria-expanded": boolean; onClick: () => void } };
+
+/** A popover menu: Escape and outside clicks close it, arrow keys move between items. */
+export function Menu({ trigger, children, label, align = "right", up = false }: { trigger: (state: MenuTrigger) => ReactNode; children: (close: () => void) => ReactNode; label: string; align?: "left" | "right"; up?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  const toggle = useCallback(() => setOpen((value) => !value), []);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: PointerEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      wrap.current?.querySelector<HTMLElement>("[aria-haspopup]")?.focus();
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    panel.current?.focus();
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const move = (direction: number) => {
+    const items = [...(panel.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    items[(index + direction + items.length) % items.length].focus();
+  };
+  return (
+    <div className="menu-wrap" ref={wrap}>
+      {trigger({ open, toggle, props: { "aria-haspopup": "menu", "aria-expanded": open, onClick: toggle } })}
+      {open && <div ref={panel} role="menu" aria-label={label} tabIndex={-1} className={`menu-panel ${align === "left" ? "is-left" : ""} ${up ? "is-up" : ""}`} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); move(1); } else if (event.key === "ArrowUp") { event.preventDefault(); move(-1); } }}>{children(close)}</div>}
+    </div>
+  );
+}
+
+export function MenuItem({ icon, children, end, onSelect, checked, danger = false }: { icon?: string; children: ReactNode; end?: ReactNode; onSelect: () => void; checked?: boolean; danger?: boolean }) {
+  return <button type="button" role={checked === undefined ? "menuitem" : "menuitemradio"} aria-checked={checked} className={`menu-item ${danger ? "is-danger" : ""}`} onClick={onSelect}>{icon && <Icon name={icon} size={15}/>}{children}{(end || checked) && <span className="menu-end">{end ?? <Icon name="check" size={14}/>}</span>}</button>;
 }
 
 export function SkeletonRows({ rows = 5, columns }: { rows?: number; columns: number }) {
@@ -57,17 +107,30 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
   return <button type="button" className="btn btn-secondary btn-sm" onClick={() => void navigator.clipboard.writeText(value).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); })}><Icon name={copied ? "check" : "copy"} size={14}/>{copied ? "Copied" : label}</button>;
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Dialogs hold focus: Tab cycles inside, Escape closes, and focus returns to what opened them.
 function useOverlay(onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => { close.current = onClose; });
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     ref.current?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { close.current(); return; }
+      if (event.key !== "Tab" || !ref.current) return;
+      const items = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((item) => item.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = overflow; previous?.focus?.(); };
-  }, [onClose]);
+  }, []);
   return ref;
 }
 

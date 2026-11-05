@@ -139,7 +139,7 @@ export type DeliveryAttempt = {
   provider_id: string | null;
 };
 
-export type TokenScope = "projects:read" | "projects:write" | "inventories:write" | "scans:read" | "findings:read";
+export type TokenScope = "projects:read" | "projects:write" | "inventories:write" | "inventories:check" | "scans:read" | "findings:read";
 
 export type ApiToken = {
   id: string;
@@ -154,6 +154,213 @@ export type ApiToken = {
 };
 
 export type CreatedApiToken = ApiToken & { token: string };
+
+// ── Central security policies ──────────────────────────────────────────────
+
+export type Threshold = "none" | "low" | "medium" | "high" | "critical";
+
+/** The owner's minimum. Pipelines may tighten it but never relax it. */
+export type PolicyRules = {
+  fail_on: Threshold;
+  fail_on_unknown: boolean;
+  fail_on_kev: boolean;
+  epss_threshold: number | null;
+  fail_on_incomplete: boolean;
+  require_monitored_manifests: boolean;
+  allow_new_only: boolean;
+  allow_ignore_acknowledged: boolean;
+};
+
+export type PolicyVersion = {
+  /** Null when the installation has never saved a policy (version 0). */
+  id: string | null;
+  scope: "installation" | "project";
+  project_id: string | null;
+  version: number;
+  /** Project scope only: null means the override was cleared. */
+  rules: PolicyRules | null;
+  note: string;
+  created_at: string | null;
+};
+
+export type ProjectPolicy = { project_id: string; policy: PolicyVersion; effective: PolicyRules };
+export type Policies = { installation: PolicyVersion; projects: ProjectPolicy[] };
+
+// ── Gate results and recorded decisions ────────────────────────────────────
+
+export type GatePolicy = {
+  fail_on: Threshold;
+  fail_on_unknown: boolean;
+  fail_on_kev: boolean;
+  epss_threshold: number | null;
+  new_only: boolean;
+  ignore_acknowledged: boolean;
+  fail_on_incomplete: boolean;
+  require_monitored_manifests: boolean;
+};
+
+export type GateStatus = "pass" | "fail" | "error";
+export type PolicySource = { scope: "installation" | "project"; project_id: string | null; version: number; policy_id: string | null };
+export type PolicyAdjustment = { rule: string; requested: string; enforced: string; source: string };
+export type MissingManifest = { project_id: string; project_name: string; target_path: string };
+
+export type GateItem = {
+  finding_id: string | null;
+  target_path: string;
+  ecosystem: string;
+  package_name: string;
+  package_version: string;
+  purl: string | null;
+  advisory_ids: string[];
+  summary: string;
+  severity: string;
+  fixed_versions: string[];
+  cvss_vectors: string[];
+  kev_known: boolean;
+  epss_score: number | null;
+  workflow_status: string;
+  new: boolean;
+  outcome: "violation" | "ignored" | "below_threshold";
+  reasons: string[];
+};
+
+export type ScanGate = {
+  scan_id: string;
+  project_id: string;
+  project_name: string;
+  target_path: string;
+  inventory_revision: string | null;
+  mode: "monitor" | "check";
+  scan_status: string;
+  complete: boolean;
+  coverage_notes: string[];
+  error: string | null;
+  status: GateStatus;
+  items: GateItem[];
+};
+
+export type GateResult = {
+  decision_id: string | null;
+  status: GateStatus;
+  evaluated_at: string;
+  /** The enforced policy. */
+  policy: GatePolicy;
+  /** What the pipeline asked for. */
+  requested_policy: GatePolicy;
+  policy_sources: PolicySource[];
+  adjustments: PolicyAdjustment[];
+  missing_manifests: MissingManifest[];
+  reasons: string[];
+  violations: number;
+  ignored: number;
+  below_threshold: number;
+  scans: ScanGate[];
+};
+
+export type DecisionActor = {
+  kind: "owner" | "token" | "identity";
+  name: string;
+  token_id: string | null;
+  /** True only for OIDC-verified runs. */
+  verified: boolean;
+  provider: string | null;
+  repository: string | null;
+  workflow: string | null;
+  ref: string | null;
+  event: string | null;
+  run_id: string | null;
+  run_url: string | null;
+};
+
+export type DecisionMode = "monitor" | "check" | "mixed";
+
+export type DecisionSummary = {
+  id: string;
+  created_at: string;
+  status: GateStatus;
+  project_id: string;
+  project_name: string;
+  revision: string | null;
+  /** Full verified commit SHA, for OIDC runs only. */
+  commit: string | null;
+  mode: DecisionMode;
+  violations: number;
+  ignored: number;
+  below_threshold: number;
+  missing_manifests: number;
+  actor: DecisionActor;
+  policy_sources: PolicySource[];
+  /** How many rules central policy enforced over the request. */
+  adjustments: number;
+};
+
+export type DecisionInput = {
+  scan_id: string;
+  target_path: string;
+  filename: string;
+  mode: "monitor" | "check";
+  sha256: string;
+  revision: string | null;
+  scan_status: string;
+  complete: boolean;
+  engine_version: string | null;
+  completed_at: string | null;
+  coverage_notes: string[];
+};
+
+export type DecisionException = {
+  finding_id: string | null;
+  target_path: string;
+  package_name: string;
+  package_version: string;
+  advisory_ids: string[];
+  workflow_status: string;
+  reason: string;
+  risk_until: string | null;
+};
+
+export type DecisionDetail = DecisionSummary & {
+  inputs: DecisionInput[];
+  exceptions: DecisionException[];
+  intelligence_updated_at: string | null;
+  result: GateResult;
+};
+
+export type ReportFormat = "sarif" | "junit" | "markdown";
+
+// ── Trusted CI identities (OIDC) ───────────────────────────────────────────
+
+export type IdentityProvider = "github" | "gitlab";
+
+export type TrustedIdentity = {
+  id: string;
+  project_id: string;
+  name: string;
+  provider: IdentityProvider;
+  issuer: string;
+  repository: string;
+  repository_id: string | null;
+  /** Trusted workflow path; null accepts any workflow in the repository. */
+  workflow: string | null;
+  /** Branch whose runs may update monitored state; null means check-only. */
+  monitor_ref: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  disabled_at: string | null;
+};
+
+export type IdentityInput = {
+  project_id: string;
+  name?: string;
+  provider: IdentityProvider;
+  issuer?: string;
+  repository: string;
+  repository_id?: string | null;
+  workflow?: string | null;
+  monitor_ref?: string | null;
+};
+
+export type Identities = { audience: string; identities: TrustedIdentity[] };
 
 // The dashboard listens for this to send expired or revoked sessions back to the login page.
 export const UNAUTHORIZED_EVENT = "depradar:unauthorized";
