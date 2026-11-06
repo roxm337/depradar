@@ -21,7 +21,7 @@ def list_tokens(db: Db) -> list[ApiToken]:
 def create_token(body: TokenInput, db: Db) -> CreatedTokenOutput:
     project_id = str(body.project_id) if body.project_id else None
     token, secret = auth.create_token(
-        db, body.name, list(body.scopes), project_id, body.expires_in_days
+        db, body.name, list(body.scopes), project_id, body.expires_in_days, body.audience
     )
     return CreatedTokenOutput(**TokenOutput.model_validate(token).model_dump(), token=secret)
 

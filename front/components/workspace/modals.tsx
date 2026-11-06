@@ -3,9 +3,9 @@
 import { useState, type DragEvent, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { bytes, inventoryKind, supportedInventory, tokenPresets } from "@/components/workspace/format";
+import { assistantPresets, bytes, inventoryKind, supportedInventory, tokenPresets } from "@/components/workspace/format";
 import { CopyButton, Modal, Pkg, Segmented } from "@/components/workspace/ui";
-import type { CreatedApiToken } from "@/lib/api";
+import type { CreatedApiToken, TokenAudience } from "@/lib/api";
 
 export function Modals() {
   const { modal, setModal } = useWorkspace();
@@ -16,7 +16,7 @@ export function Modals() {
   if (modal.kind === "risk") return <RiskModal onClose={close} findingId={modal.findingId}/>;
   if (modal.kind === "retire") return <RetireModal onClose={close} projectId={modal.projectId} targetPath={modal.targetPath}/>;
   if (modal.kind === "connector") return modal.channel === "email" ? <EmailModal onClose={close}/> : <TelegramModal onClose={close}/>;
-  return <TokenModal onClose={close}/>;
+  return <TokenModal onClose={close} audience={modal.audience ?? "api"}/>;
 }
 
 function ProjectModal({ onClose }: { onClose: () => void }) {
@@ -223,21 +223,34 @@ function TelegramModal({ onClose }: { onClose: () => void }) {
 
 const expiries = [{ value: "30", label: "30 days" }, { value: "90", label: "90 days" }, { value: "180", label: "180 days" }, { value: "365", label: "1 year" }];
 
-function TokenModal({ onClose }: { onClose: () => void }) {
+function TokenModal({ onClose, audience }: { onClose: () => void; audience: TokenAudience }) {
   const { projects, actions, notify, reload } = useWorkspace();
-  const [preset, setPreset] = useState("pipeline");
+  const assistant = audience === "mcp";
+  const presets = assistant ? assistantPresets : tokenPresets;
+  const [preset, setPreset] = useState(assistant ? "checks" : "pipeline");
   const [projectId, setProjectId] = useState("");
-  const [expiry, setExpiry] = useState("90");
+  const [expiry, setExpiry] = useState(assistant ? "30" : "90");
   const [created, setCreated] = useState<CreatedApiToken | null>(null);
   const [busy, setBusy] = useState(false);
-  const restrictedConflict = Boolean(projectId) && tokenPresets[preset].scopes.includes("projects:write");
+  const restrictedConflict = Boolean(projectId) && presets[preset].scopes.includes("projects:write");
   function finish() { if (created) void reload(); onClose(); }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (restrictedConflict) { notify("error", "Tokens that create projects must cover every project."); return; }
     setBusy(true);
-    setCreated(await actions.createToken({ name: String(new FormData(event.currentTarget).get("name") ?? "").trim(), scopes: tokenPresets[preset].scopes, project_id: projectId || null, expires_in_days: Number(expiry) }));
+    setCreated(await actions.createToken({ name: String(new FormData(event.currentTarget).get("name") ?? "").trim(), scopes: presets[preset].scopes, project_id: projectId || null, expires_in_days: Number(expiry), audience }));
     setBusy(false);
+  }
+  if (created && assistant) {
+    return (
+      <Modal title="Copy your token now" description="It is shown once. DepRadar stores only a hash, so a lost token must be replaced." onClose={finish} steps={[2, 2]}>
+        <div className="modal-body">
+          <div className="secret"><small>{created.name} · expires {new Date(created.expires_at).toLocaleDateString()}</small><code>{created.token}</code><div><CopyButton value={created.token} label="Copy token"/></div></div>
+          <div className="callout"><Icon name="key" size={16}/><span>Set it as <span className="inline-code">DEPRADAR_MCP_TOKEN</span> where your assistant runs, then add DepRadar with a snippet from Settings → AI assistants. It works on the MCP endpoint only, never on the REST API.</span></div>
+        </div>
+        <div className="modal-foot"><button className="btn btn-primary" onClick={finish}><Icon name="check" size={15}/>Done</button></div>
+      </Modal>
+    );
   }
   if (created) {
     return (
@@ -252,17 +265,19 @@ function TokenModal({ onClose }: { onClose: () => void }) {
     );
   }
   return (
-    <Modal title="New CI/CD token" description="Pipelines use tokens to upload lockfiles and evaluate the dependency gate." onClose={onClose} steps={[1, 2]}>
+    <Modal title={assistant ? "New AI assistant token" : "New CI/CD token"} description={assistant ? "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP." : "Pipelines use tokens to upload lockfiles and evaluate the dependency gate."} onClose={onClose} steps={[1, 2]}>
       <form onSubmit={submit}>
         <div className="modal-body">
-          <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={100} placeholder="acme-storefront · GitHub Actions" autoFocus/></label>
-          <div className="field"><span className="field-label">Access</span><div className="choice-list" role="radiogroup" aria-label="Access">{Object.entries(tokenPresets).map(([key, value]) => <button key={key} type="button" role="radio" className="choice" aria-checked={preset === key} onClick={() => setPreset(key)}><span className="radio"/><b>{value.label}</b><small>{value.detail}</small></button>)}</div></div>
+          <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={100} placeholder={assistant ? "Laptop · Claude Code" : "acme-storefront · GitHub Actions"} autoFocus/></label>
+          <div className="field"><span className="field-label">Access</span><div className="choice-list" role="radiogroup" aria-label="Access">{Object.entries(presets).map(([key, value]) => <button key={key} type="button" role="radio" className="choice" aria-checked={preset === key} onClick={() => setPreset(key)}><span className="radio"/><b>{value.label}</b><small>{value.detail}</small></button>)}</div></div>
           <div className="form-row">
             <label className="field"><span className="field-label">Project</span><select className="select" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">All projects</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <div className="field"><span className="field-label">Expires after</span><select className="select" value={expiry} onChange={(event) => setExpiry(event.target.value)}>{expiries.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
           </div>
           {restrictedConflict && <div className="callout is-danger"><Icon name="warning" size={16}/>Project onboarding needs a token that covers every project. Choose “All projects” or another access level.</div>}
-          <p className="field-hint">GitHub Actions and GitLab CI can skip the secret entirely: add a trusted identity in Settings → Trusted identities and pipelines sign in with their short-lived OIDC token.</p>
+          {assistant
+            ? <p className="field-hint">What the assistant reads is sent to its model provider. For client work, restrict the token to that client’s project.</p>
+            : <p className="field-hint">GitHub Actions and GitLab CI can skip the secret entirely: add a trusted identity in Settings → Trusted identities and pipelines sign in with their short-lived OIDC token.</p>}
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || restrictedConflict}>{busy && <span className="spinner"/>}Create token</button></div>
       </form>

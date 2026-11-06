@@ -137,6 +137,31 @@ class ValidationTest(unittest.TestCase):
         self.assertLess(ctl.version_tuple("2.20.3"), ctl.MIN_COMPOSE)
 
 
+class ConfigureTest(unittest.TestCase):
+    def test_reconfiguring_keeps_settings_the_owner_turned_on(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                "CONFIG_DIR": root,
+                "ENV_FILE": root / "depradar.env",
+                "STATE_FILE": root / "install.json",
+                "CADDYFILE": root / "Caddyfile",
+                "PORTS_FILE": root / "compose.ports.yaml",
+            }
+            with mock.patch.multiple(ctl, **paths):
+                ctl.apply_configuration(state(), {})
+                values = ctl.read_env(paths["ENV_FILE"])
+                self.assertEqual(values["DEPRADAR_MCP_ENABLED"], "false")
+                values["DEPRADAR_MCP_ENABLED"] = "true"
+                paths["ENV_FILE"].write_text(ctl.render_env(values))
+                ctl.apply_configuration(state(), {})
+                again = ctl.read_env(paths["ENV_FILE"])
+            self.assertEqual(again["DEPRADAR_MCP_ENABLED"], "true")
+            self.assertEqual(again["POSTGRES_PASSWORD"], values["POSTGRES_PASSWORD"])
+
+
 class PrivateWriteTest(unittest.TestCase):
     def test_files_are_created_owner_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

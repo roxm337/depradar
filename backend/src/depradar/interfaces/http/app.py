@@ -1,10 +1,12 @@
 """The HTTP API: middleware, error mapping, and routers."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.routing import Route
 
 from depradar import __version__
 from depradar.application.errors import (
@@ -19,6 +21,7 @@ from depradar.application.errors import (
     UpstreamFailed,
 )
 from depradar.interfaces.http.routes import (
+    assistants,
     auth,
     ci,
     components,
@@ -30,6 +33,7 @@ from depradar.interfaces.http.routes import (
     projects,
     tokens,
 )
+from depradar.interfaces.mcp.transport import endpoint as mcp_endpoint
 
 STATUS: dict[type[ApplicationError], int] = {
     NotFound: 404,
@@ -42,11 +46,20 @@ STATUS: dict[type[ApplicationError], int] = {
     UpstreamFailed: 502,
 }
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async with mcp_endpoint.lifespan():
+        yield
+
+
 app = FastAPI(
     title="DepRadar",
     version=__version__,
     description="Dependency vulnerability monitoring with CI/CD gates. Automation clients "
-    "authenticate with `Authorization: Bearer <token>` from Settings → CI/CD tokens.",
+    "authenticate with `Authorization: Bearer <token>` from Settings → CI/CD tokens. AI "
+    "assistants connect over MCP at `/api/mcp` with an AI assistant token; see docs/MCP.md.",
+    lifespan=lifespan,
 )
 
 
@@ -95,5 +108,9 @@ for router in (
     policies.router,
     identities.router,
     ci.router,
+    assistants.router,
 ):
     app.include_router(router)
+# The MCP endpoint speaks JSON-RPC, not REST, so it is mounted as a plain ASGI route. It is
+# under /api/ so existing reverse proxies already route it to the API.
+app.router.routes.append(Route("/api/mcp", endpoint=mcp_endpoint))

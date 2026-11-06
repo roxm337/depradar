@@ -139,7 +139,8 @@ never retire anything on their own. Responds with `target_path`, `retired_invent
 `GET /api/components?name=lodash` answers which projects use a package, across the current
 monitored manifest of every project (owner session only; API tokens cannot search). Optional
 `ecosystem` (for example `npm` or `PyPI`) and `version` (exact match, as the manifest records it)
-narrow the search. Each match gives the package as the manifest spells it, its version (empty when
+narrow the search. [AI assistant tokens](MCP.md) with `components:read` search through the
+`search_packages` MCP tool, limited to their project when restricted. Each match gives the package as the manifest spells it, its version (empty when
 unpinned), project, manifest path, revision, upload time, the scan that indexed it with its
 completeness, and the number of open findings for that package in that manifest. At most 1,000
 matches are returned; `truncated` says when there were more.
@@ -194,12 +195,21 @@ connector configuration is retained. Existing backup archives are independent sn
 not rewritten by project deletion.
 
 `GET /api/maintenance/retention` reads the policy.
-`PUT /api/maintenance/retention`, body `{"scan_days":30,"delivery_days":30}`, configures history
-retention (1–3650 days). The worker runs cleanup daily; `POST /api/maintenance/retention/run`
+`PUT /api/maintenance/retention`, body `{"scan_days":30,"delivery_days":30,"audit_days":90}`,
+configures history retention (1–3650 days). `audit_days` is how long AI assistant activity is
+kept; omitting it keeps the current value. The worker runs cleanup daily; `POST /api/maintenance/retention/run`
 triggers it manually. The latest inventory and scan, active work, and event-bearing audit evidence
 are preserved. Superseded, unreferenced inventory files and older redundant scans are eligible for
 cleanup. Old terminal delivery records are pruned, while pending/in-flight work remains. Gate
 decisions older than the scan retention are pruned, except each project's most recent decision,
-and exchanged OIDC tokens are removed a day after they expire. Central policy versions are kept.
+exchanged OIDC tokens are removed a day after they expire, and AI assistant activity older than
+`audit_days` is removed. Central policy versions are kept.
+
+## AI assistant activity
+
+`GET /api/mcp/activity?limit=50&offset=0&token_id=` (owner session only) lists recent MCP calls,
+newest first: token, self-reported client name, tool, project, outcome (`ok`, `error`, or
+`denied`), detail, and duration. Arguments and results are never recorded. `enabled` says whether
+the endpoint is on. The MCP endpoint itself is described in [AI assistants](MCP.md).
 
 See [backup and restore procedures](BACKUPS.md) for separate archive management.

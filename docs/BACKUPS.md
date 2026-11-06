@@ -42,9 +42,9 @@ comes from `DEPRADAR_DATABASE_URL`.
 ## Restore an installation
 
 Restore only archives from trusted sources. Checksums detect corruption; they are not signatures
-authenticating who created an archive. New archives use schema revision `0005`. Restore accepts
-`0002`, `0003`, and `0004` archives and fills newly added fields with safe defaults for the current
-schema. On a server installed with `depradarctl`, use `depradarctl backup` and `depradarctl restore`
+authenticating who created an archive. New archives use schema revision `0008`. Restore accepts
+archives from `0002` through `0007` and fills newly added fields with safe defaults for the current
+schema. Archives include AI assistant activity but never sessions or tokens. On a server installed with `depradarctl`, use `depradarctl backup` and `depradarctl restore`
 (see [DEPLOYMENT.md](DEPLOYMENT.md)); they wrap these steps.
 
 1. Prepare a new, empty PostgreSQL database and an empty inventory directory.
