@@ -7,10 +7,13 @@ VS Code, can use it to answer questions like these:
 - "What is most urgent across our clients?"
 - "Why did the gate fail on this pull request?"
 - "Does this lockfile have known vulnerabilities?"
+- "A critical CVE was published this morning. Rescan Acme now."
 
 Assistants can read findings, scans, gate decisions, and package search, and run check scans on
-lockfiles. Nothing an assistant does changes findings, alerts, monitored manifests, policies, or
-settings.
+lockfiles. If you allow it per token, they can also create projects, rescan stored manifests, and
+turn monitoring and alerts on or make them stricter. Every change an assistant can make only
+increases what DepRadar watches or reports. Assistants never resolve or triage findings, upload
+monitored manifests, turn monitoring or alerts off, or change policies or settings.
 
 ## Before you enable it
 
@@ -49,15 +52,23 @@ it is on.
 
 In Settings → **AI assistants**, choose **New token**:
 
-- **Read only:** `projects:read`, `findings:read`, `scans:read`, `components:read`.
+- **Read:** `projects:read`, `findings:read`, `scans:read`, `components:read`.
 - **Read + lockfile checks:** the same, plus `inventories:check`.
+
+Under **Also allow**, add any of these changes. Each is off by default:
+
+- **Rescan manifests** (`scans:write`): rescan stored monitored manifests now.
+- **Tighten monitoring and alerts** (`monitoring:tighten`): turn monitoring and alerts on, check
+  more often, or alert on lower severities.
+- **Create projects** (`projects:write`): only for tokens that cover every project.
 
 Give each person and assistant their own token, and restrict it to one project for client work.
 
 Assistant tokens work on `/api/mcp` only, and REST tokens never work there. Each kind is refused
 with `401` on the other interface, so a token copied out of an assistant's configuration cannot
-be used against the REST API. Assistant tokens cannot hold `projects:write` or
-`inventories:write`.
+be used against the REST API. Assistant tokens cannot hold `inventories:write`, so they never
+upload monitored manifests. `scans:write` and `monitoring:tighten` work on assistant tokens only;
+REST tokens queue rechecks with `inventories:write`.
 
 Through the API, create one with `POST /api/tokens` and `"audience": "mcp"`.
 
@@ -138,10 +149,15 @@ does not offer yet. Support for them is planned as a separate change.
 | `preview_gate` | `scans:read` | Whether finished scans would pass a gate, without recording a decision. Central policies apply. |
 | `list_gate_decisions`, `get_gate_decision` | `scans:read` | Recorded CI gate decisions and the evidence behind them. |
 | `check_manifest` | `inventories:check` | Queues a check scan of a lockfile and returns its scan ID. |
+| `create_project` | `projects:write` | Creates a project with monitoring off. Refused for project-restricted tokens. |
+| `rescan_manifests` | `scans:write` | Queues monitor scans of a project's stored manifests and returns their scan IDs. |
+| `set_monitoring` | `monitoring:tighten` | Turns scheduled rechecks on, or makes them more frequent. |
+| `set_alerts` | `monitoring:tighten` | Turns a project's alerts on, or lowers the severity that alerts immediately. |
 
 - **Hidden tools:** `tools/list` shows only the tools the token's scopes allow. A hidden tool that
   is called anyway returns an error naming the missing scope.
-- **Read-only annotations:** every tool except `check_manifest` is marked read-only.
+- **Annotations:** the read tools are marked read-only. `check_manifest` and the four change tools
+  are marked as not destructive, and all of them except `create_project` as idempotent.
 - **Check scans run in the background:**
   1. `check_manifest` returns a scan ID right away.
   2. The assistant calls `get_scan` until `finished` is true.
@@ -150,6 +166,35 @@ does not offer yet. Support for them is planned as a separate change.
   change findings, alerts, or monitored manifests. Unchanged content reuses the stored snapshot.
   The upload limit is the same 10 MiB.
 - **Failed scans:** failed or superseded scans never pass `preview_gate`.
+
+## Changes that only increase coverage
+
+The four change tools call the same use cases as the dashboard. Before applying a change, the
+server checks that it keeps or increases what DepRadar watches and reports. Anything else is
+refused with an error that tells the assistant the owner can make the change in the dashboard.
+Project-restricted tokens can act on their own project only.
+
+- **`create_project(name, description)`:** a new project starts with monitoring off, as in the
+  dashboard. The assistant can then call `set_monitoring`. Manifests still come from the
+  project's pipeline or the owner.
+- **`rescan_manifests(project_id, inventory_ids)`:** queues the same monitor scan the scheduler
+  runs at every interval, on the stored snapshot. Nothing is uploaded, so no lockfile passes
+  through the conversation.
+  - Without `inventory_ids`, it rescans every current monitored manifest of the project: the
+    newest snapshot of each path that is not retired. `inventory_ids` from
+    `get_project_overview` narrows that set.
+  - A manifest that already has a monitor scan queued or running returns that scan instead of
+    another, so repeated calls never pile up jobs. The scheduler applies the same rule.
+  - Retired manifests, older snapshots, and check inventories are refused.
+  - Results follow the usual rules: failed or partial scans never resolve findings.
+- **`set_monitoring(project_id, enabled, interval_hours)`:** accepted when monitoring is turned
+  on (any interval from 1 to 168 hours), or stays on with the same or a shorter interval.
+  Turning monitoring off or lengthening the interval is refused.
+- **`set_alerts(project_id, enabled, immediate_min_severity)`:** accepted when alerts are turned
+  on, or stay on with the same or a lower threshold. Thresholds are compared after `inherit`
+  is resolved against the installation's setting under Notifications, ordered low < medium <
+  high < critical. Turning alerts off or raising the threshold, directly or through `inherit`,
+  is refused. Alerts that are off send nothing, so turning them on at any threshold is accepted.
 
 ## Prompts
 
@@ -186,8 +231,9 @@ Prompts take DepRadar IDs only, and they are listed only to tokens with the scop
   than the dashboard or `DEPRADAR_MCP_ALLOWED_ORIGINS` are refused, which blocks DNS rebinding
   from a browser.
 - **What assistants cannot do:** manage tokens, identities, connectors, policies, retention, or
-  backups; create, delete, or reconfigure projects; triage findings; or read raw manifest
-  content. Triage tools may follow in a later change.
+  backups; delete projects; upload or retire monitored manifests; turn monitoring or alerts off,
+  check less often, or raise an alert threshold; triage findings; or read raw manifest content.
+  Each of these can hide risk or resolve findings, so it stays with the owner in the dashboard.
 
 ## Protocol
 
@@ -214,3 +260,4 @@ earlier revisions such as 2025-11-25.
 | `403 Origin is not allowed` | A browser-based client sent its own origin. Add it to `DEPRADAR_MCP_ALLOWED_ORIGINS`. |
 | A tool is missing from the client | The token lacks the scope for it. |
 | `preview_gate` says a scan is still running | The worker has not finished the check scan yet. Call `get_scan` again. |
+| `Assistants cannot turn monitoring off` (or check less often, turn alerts off, raise the threshold) | Assistants can only tighten. Make the change in the dashboard under **Projects**. |

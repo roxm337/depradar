@@ -482,3 +482,46 @@ def actor_label(actor: dict[str, Any]) -> str:
     kind = str(actor.get("kind", "unknown"))
     name = clean(str(actor.get("name") or ""), 100)
     return f"{kind}: {name}" if name else kind
+
+
+# Changes that only increase coverage
+
+
+class RescanUntrusted(BaseModel):
+    path: str
+
+
+class RescanItem(BaseModel):
+    inventory_id: str
+    scan_id: str
+    status: str
+    queued: bool = Field(
+        description="False when a scan of this manifest was already queued or running; its ID "
+        "is returned instead of queueing another."
+    )
+    untrusted: RescanUntrusted
+
+
+class RescanStarted(BaseModel):
+    project_id: str
+    scans: list[RescanItem]
+    next_step: str = (
+        "Call get_scan with each scan_id until `finished` is true, then list_findings. Failed "
+        "or partial scans never resolve findings."
+    )
+
+
+class MonitoringOut(BaseModel):
+    project_id: str
+    enabled: bool
+    interval_hours: int
+    next_check_at: datetime | None
+
+
+class AlertsOut(BaseModel):
+    project_id: str
+    enabled: bool
+    threshold: str = Field(description="The project's own threshold, or `inherit`.")
+    effective_threshold: str = Field(
+        description="The lowest severity that alerts immediately, after `inherit` is resolved."
+    )

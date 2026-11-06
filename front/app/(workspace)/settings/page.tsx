@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
 import { callLabel, callOutcome, clientSnippets, mcpEndpoint, tokensFor } from "@/components/workspace/assistants-logic";
 import { useWorkspace } from "@/components/workspace/context";
+import { ConfirmDialog } from "@/components/workspace/drawer-dialog";
 import { accessLabel, formatGroups, projectName, relativeTime, shortDate, tokenState } from "@/components/workspace/format";
 import { IdentitiesSection } from "@/components/workspace/identities";
 import { CopyButton, Empty, PageHead, Sheet } from "@/components/workspace/ui";
@@ -57,29 +58,47 @@ export default function SettingsPage() {
 
 function TokenSheet({ tokens, onCreate, emptyText, revokeWarning }: { tokens: ApiToken[]; onCreate: () => void; emptyText: string; revokeWarning: string }) {
   const { projects, now, actions } = useWorkspace();
+  const [revoking, setRevoking] = useState<ApiToken | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function revoke(token: ApiToken) {
+    setBusy(true);
+    if (await actions.revokeToken(token)) setRevoking(null);
+    setBusy(false);
+  }
   return (
-    <Sheet title="Tokens" meta={`${tokens.filter((token) => tokenState(token, now) === "Active").length} active`} actions={<button className="btn btn-primary btn-sm" onClick={onCreate}><Icon name="plus" size={14}/>New token</button>}>
-      <div className="table-wrap">
-        <table className="table">
-          <thead><tr><th>Name</th><th className="col-optional">Access</th><th className="col-optional">Project</th><th className="col-optional">Last used</th><th className="col-optional">Expires</th><th>Status</th><th aria-label="Actions"/></tr></thead>
-          <tbody>{tokens.map((token) => {
-            const state = tokenState(token, now);
-            return (
-              <tr key={token.id}>
-                <td><div className="cell-main"><b>{token.name}</b><small className="mono">{token.display_prefix}…</small></div></td>
-                <td className="col-optional"><span className="tag" title={token.scopes.join(", ")}>{accessLabel(token.scopes)}</span></td>
-                <td className="col-optional">{projectName(projects, token.project_id)}</td>
-                <td className="col-optional muted">{token.last_used_at ? relativeTime(now, token.last_used_at) : "Never"}</td>
-                <td className="col-optional muted">{shortDate(token.expires_at)}</td>
-                <td><span className="status"><i className={`dot ${state === "Active" ? "dot-ok" : ""}`}/>{state}</span></td>
-                <td className="right">{state === "Active" && <button className="btn btn-ghost btn-sm" onClick={() => { if (window.confirm(`Revoke “${token.name}”? ${revokeWarning}`)) void actions.revokeToken(token); }}>Revoke</button>}</td>
-              </tr>
-            );
-          })}</tbody>
-        </table>
-        {!tokens.length && <Empty title="No tokens yet" text={emptyText} action={<button className="btn btn-primary" onClick={onCreate}><Icon name="key" size={15}/>Create the first token</button>}/>}
-      </div>
-    </Sheet>
+    <>
+      <Sheet title="Tokens" meta={`${tokens.filter((token) => tokenState(token, now) === "Active").length} active`} actions={<button className="btn btn-primary btn-sm" onClick={onCreate}><Icon name="plus" size={14}/>New token</button>}>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Name</th><th className="col-optional">Access</th><th className="col-optional">Project</th><th className="col-optional">Last used</th><th className="col-optional">Expires</th><th>Status</th><th aria-label="Actions"/></tr></thead>
+            <tbody>{tokens.map((token) => {
+              const state = tokenState(token, now);
+              return (
+                <tr key={token.id}>
+                  <td><div className="cell-main"><b>{token.name}</b><small className="mono">{token.display_prefix}…</small></div></td>
+                  <td className="col-optional"><span className="tag" title={token.scopes.join(", ")}>{accessLabel(token.scopes)}</span></td>
+                  <td className="col-optional">{projectName(projects, token.project_id)}</td>
+                  <td className="col-optional muted">{token.last_used_at ? relativeTime(now, token.last_used_at) : "Never"}</td>
+                  <td className="col-optional muted">{shortDate(token.expires_at)}</td>
+                  <td><span className="status"><i className={`dot ${state === "Active" ? "dot-ok" : ""}`}/>{state}</span></td>
+                  <td className="right">{state === "Active" && <button className="btn btn-ghost btn-sm" onClick={() => setRevoking(token)}>Revoke</button>}</td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+          {!tokens.length && <Empty title="No tokens yet" text={emptyText} action={<button className="btn btn-primary" onClick={onCreate}><Icon name="key" size={15}/>Create the first token</button>}/>}
+        </div>
+      </Sheet>
+      {revoking && (
+        <ConfirmDialog title={`Revoke “${revoking.name}”?`} description="This cannot be undone." confirmLabel="Revoke token" busy={busy} onClose={() => setRevoking(null)} onConfirm={() => void revoke(revoking)}>
+          <div className="callout"><Icon name="key" size={16}/><span><span className="mono">{revoking.display_prefix}…</span> · {accessLabel(revoking.scopes)} · {projectName(projects, revoking.project_id)}</span></div>
+          <ul className="retire-effects">
+            <li>{revokeWarning}</li>
+            <li>To restore access, create a new token and replace it where it is configured.</li>
+          </ul>
+        </ConfirmDialog>
+      )}
+    </>
   );
 }
 
@@ -120,7 +139,7 @@ function AssistantsSection() {
   const create = () => workspace.setModal({ kind: "token", audience: "mcp" });
   return (
     <>
-      <div className="section-intro"><h2>AI assistants</h2><p>Claude, ChatGPT, Cursor, and other MCP clients can read findings, scans, gate decisions, and package search, and run check scans on lockfiles. Nothing they do changes findings, alerts, or monitored manifests.</p></div>
+      <div className="section-intro"><h2>AI assistants</h2><p>Claude, ChatGPT, Cursor, and other MCP clients can read findings, scans, gate decisions, and package search, and run check scans on lockfiles. Tokens can also be allowed to create projects, rescan stored manifests, and turn monitoring and alerts on or make them stricter. Assistants never change findings, upload manifests, or turn monitoring or alerts off.</p></div>
       {activity && !activity.enabled && <div className="callout is-danger"><Icon name="warning" size={16}/><span>The MCP endpoint is turned off. Set <span className="inline-code">DEPRADAR_MCP_ENABLED=true</span> for the API and restart it.</span></div>}
       <div className="callout"><Icon name="shield" size={16}/><span>Everything an assistant reads is sent to its model provider. Give each assistant its own token, and restrict it to one project for client work.</span></div>
       <TokenSheet tokens={tokensFor(tokens, "mcp")} onCreate={create} emptyText="Create one per person and assistant. Tokens work on the MCP endpoint only, are shown once, and are never included in backups." revokeWarning="The assistant loses access immediately."/>
@@ -193,6 +212,14 @@ function RetentionSection() {
 
 function RetentionForm({ retention, onSave, onRun }: { retention: RetentionPolicy; onSave: (value: RetentionPolicy) => Promise<boolean>; onRun: () => Promise<void> }) {
   const [draft, setDraft] = useState(retention);
+  const [confirming, setConfirming] = useState(false);
+  const [running, setRunning] = useState(false);
+  async function run() {
+    setRunning(true);
+    await onRun();
+    setRunning(false);
+    setConfirming(false);
+  }
   const dirty = draft.scan_days !== retention.scan_days || draft.delivery_days !== retention.delivery_days || draft.audit_days !== retention.audit_days;
   return (
     <Sheet title="History">
@@ -202,8 +229,17 @@ function RetentionForm({ retention, onSave, onRun }: { retention: RetentionPolic
           <label className="field"><span className="field-label">Keep deliveries for <span>days</span></span><input className="input" type="number" min={1} max={3650} required value={draft.delivery_days} onChange={(event) => setDraft({ ...draft, delivery_days: Number(event.target.value) })}/></label>
           <label className="field"><span className="field-label">Keep AI assistant activity for <span>days</span></span><input className="input" type="number" min={1} max={3650} required value={draft.audit_days} onChange={(event) => setDraft({ ...draft, audit_days: Number(event.target.value) })}/></label>
         </div>
-        <div className="page-actions"><button className="btn btn-primary" disabled={!dirty}>Save retention</button><button type="button" className="btn btn-secondary" onClick={() => { if (window.confirm("Remove scan and delivery history older than the retention periods now? This cannot be undone.")) void onRun(); }}>Run cleanup now</button></div>
+        <div className="page-actions"><button className="btn btn-primary" disabled={!dirty}>Save retention</button><button type="button" className="btn btn-secondary" onClick={() => setConfirming(true)}>Run cleanup now</button></div>
       </form>
+      {confirming && (
+        <ConfirmDialog title="Run cleanup now?" description="This cannot be undone." confirmLabel="Run cleanup" busy={running} onClose={() => setConfirming(false)} onConfirm={() => void run()}>
+          <ul className="retire-effects">
+            <li>Scans older than {retention.scan_days} days, deliveries older than {retention.delivery_days} days, and AI assistant activity older than {retention.audit_days} days are removed.</li>
+            <li>The retention periods saved above are used, not unsaved changes.</li>
+            <li>Existing backups are not changed.</li>
+          </ul>
+        </ConfirmDialog>
+      )}
     </Sheet>
   );
 }

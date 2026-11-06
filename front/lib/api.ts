@@ -141,7 +141,7 @@ export type DeliveryAttempt = {
   provider_id: string | null;
 };
 
-export type TokenScope = "projects:read" | "projects:write" | "inventories:write" | "inventories:check" | "scans:read" | "findings:read" | "components:read";
+export type TokenScope = "projects:read" | "projects:write" | "inventories:write" | "inventories:check" | "scans:read" | "findings:read" | "components:read" | "scans:write" | "monitoring:tighten";
 
 /** Where a token works: `api` for the REST API and pipelines, `mcp` for AI assistants. */
 export type TokenAudience = "api" | "mcp";

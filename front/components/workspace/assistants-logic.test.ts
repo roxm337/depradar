@@ -26,8 +26,14 @@ describe("assistant access", () => {
   });
 
   test("assistant presets have labels", () => {
-    assert.equal(accessLabel(["projects:read", "findings:read", "scans:read", "components:read"]), "Read only");
+    assert.equal(accessLabel(["projects:read", "findings:read", "scans:read", "components:read"]), "Read");
     assert.equal(accessLabel(["inventories:check", "projects:read", "findings:read", "scans:read", "components:read"]), "Read + lockfile checks");
+  });
+
+  test("allowed changes are counted on top of the preset", () => {
+    assert.equal(accessLabel(["projects:read", "findings:read", "scans:read", "components:read", "scans:write"]), "Read + 1 change");
+    assert.equal(accessLabel(["inventories:check", "projects:read", "findings:read", "scans:read", "components:read", "monitoring:tighten", "projects:write"]), "Read + lockfile checks + 2 changes");
+    assert.equal(accessLabel(["projects:read", "scans:write"]), "2 custom scopes");
   });
 
   test("calls read as words with a clear outcome", () => {

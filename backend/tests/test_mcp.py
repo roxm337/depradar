@@ -38,6 +38,11 @@ IDS = count(1)
 
 @pytest.fixture
 def mcp(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    return enable_mcp(harness, monkeypatch)
+
+
+def enable_mcp(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    """Serve /api/mcp from the test harness, with a fresh rate limiter."""
     harness.settings.mcp_enabled = True
     monkeypatch.setattr(RUNTIME, "settings", lambda: harness.settings)
     monkeypatch.setattr(RUNTIME, "factory", lambda: harness.factory)
@@ -149,9 +154,9 @@ def test_token_scopes_are_checked_against_their_audience(mcp: Harness) -> None:
             headers=mcp.headers,
         ).status_code
 
-    # Assistants never change monitored state; package search has no REST endpoint.
+    # Assistants never upload monitored manifests; package search has no REST endpoint.
     assert create(["inventories:write"], "mcp") == 422
-    assert create(["projects:write"], "mcp") == 422
+    assert create(["projects:write"], "mcp") == 201
     assert create(["components:read"], "api") == 422
     assert create(ALL, "mcp") == 201
     listed = {row["audience"] for row in mcp.client.get("/api/tokens").json()}
