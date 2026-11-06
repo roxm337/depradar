@@ -265,7 +265,7 @@ function TokenModal({ onClose, audience }: { onClose: () => void; audience: Toke
     );
   }
   return (
-    <Modal title="New CI/CD token" description="Pipelines use a token to upload manifests and check changes against your policies." onClose={onClose} steps={[1, 2]}>
+    <Modal title={assistant ? "New AI assistant token" : "New CI/CD token"} description={assistant ? "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP." : "Pipelines use a token to upload manifests and check changes against your policies."} onClose={onClose} steps={[1, 2]}>
       <form onSubmit={submit}>
         <div className="modal-body">
           <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={100} placeholder={assistant ? "Laptop · Claude Code" : "acme-storefront · GitHub Actions"} autoFocus/></label>
@@ -275,7 +275,9 @@ function TokenModal({ onClose, audience }: { onClose: () => void; audience: Toke
             <div className="field"><span className="field-label">Expires after</span><select className="select" value={expiry} onChange={(event) => setExpiry(event.target.value)}>{expiries.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
           </div>
           {restrictedConflict && <div className="callout is-danger"><Icon name="warning" size={16}/>A token that creates projects must work for every project. Choose “All projects” or another access level.</div>}
-          <p className="field-hint">GitHub Actions and GitLab CI do not need a stored token: add a trusted identity in Settings → Trusted identities, and pipelines sign in with a temporary token (OIDC) issued by GitHub or GitLab for each run.</p>
+          {assistant
+            ? <p className="field-hint">What the assistant reads is sent to its model provider. For client work, restrict the token to that client’s project.</p>
+            : <p className="field-hint">GitHub Actions and GitLab CI do not need a stored token: add a trusted identity in Settings → Trusted identities, and pipelines sign in with a temporary token (OIDC) issued by GitHub or GitLab for each run.</p>}
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || restrictedConflict}>{busy && <span className="spinner"/>}Create token</button></div>
       </form>

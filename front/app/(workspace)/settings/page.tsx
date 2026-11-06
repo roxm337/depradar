@@ -38,7 +38,7 @@ export default function SettingsPage() {
   }
   return (
     <>
-      <PageHead title="Settings" lede="Pipeline access, the health of the services that scan and send alerts, how long DepRadar keeps history, and backups."/>
+      <PageHead title="Settings" lede="Pipeline and AI assistant access, the health of the services that scan and send alerts, how long DepRadar keeps history, and backups."/>
       <div className="settings">
         <nav className="subnav" aria-label="Settings sections">{sections.map((item) => <button key={item.id} aria-current={section === item.id} onClick={() => choose(item.id)}><Icon name={item.icon} size={16}/>{item.label}</button>)}</nav>
         <div className="settings-panel" key={section}>
@@ -101,28 +101,7 @@ function CiSection({ onIdentities }: { onIdentities: () => void }) {
         </details>
       </div>
       <div className="callout"><Icon name="lock" size={16}/><span>On GitHub Actions or GitLab CI, you do not need to store a token: with a <button className="link" onClick={onIdentities}>trusted identity</button>, each job signs in with a temporary token (OIDC) issued by GitHub or GitLab, and only the branch and workflow you trust can update monitored manifests.</span></div>
-      <Sheet title="Tokens" meta={`${tokens.filter((token) => tokenState(token, now) === "Active").length} active`} actions={<button className="btn btn-primary btn-sm" onClick={() => workspace.setModal({ kind: "token" })}><Icon name="plus" size={14}/>New token</button>}>
-        <div className="table-wrap">
-          <table className="table">
-            <thead><tr><th>Name</th><th className="col-optional">Access</th><th className="col-optional">Project</th><th className="col-optional">Last used</th><th className="col-optional">Expires</th><th>Status</th><th aria-label="Actions"/></tr></thead>
-            <tbody>{tokens.map((token) => {
-              const state = tokenState(token, now);
-              return (
-                <tr key={token.id}>
-                  <td><div className="cell-main"><b>{token.name}</b><small className="mono">{token.display_prefix}…</small></div></td>
-                  <td className="col-optional"><span className="tag" title={token.scopes.join(", ")}>{accessLabel(token.scopes)}</span></td>
-                  <td className="col-optional">{projectName(projects, token.project_id)}</td>
-                  <td className="col-optional muted">{token.last_used_at ? relativeTime(now, token.last_used_at) : "Never"}</td>
-                  <td className="col-optional muted">{shortDate(token.expires_at)}</td>
-                  <td><span className="status"><i className={`dot ${state === "Active" ? "dot-ok" : ""}`}/>{state}</span></td>
-                  <td className="right">{state === "Active" && <button className="btn btn-ghost btn-sm" onClick={() => { if (window.confirm(`Revoke “${token.name}”? Pipelines using it will fail until they get a new token.`)) void actions.revokeToken(token); }}>Revoke</button>}</td>
-                </tr>
-              );
-            })}</tbody>
-          </table>
-          {!tokens.length && <Empty title="No tokens yet" text="Create one per client pipeline. Tokens are shown once, expire within a year, and are never included in backups." action={<button className="btn btn-primary" onClick={() => workspace.setModal({ kind: "token" })}><Icon name="key" size={15}/>Create the first token</button>}/>}
-        </div>
-      </Sheet>
+      <TokenSheet tokens={tokensFor(tokens, "api")} onCreate={() => workspace.setModal({ kind: "token" })} emptyText="Create one per client pipeline. Tokens are shown once, expire within a year, and are never included in backups." revokeWarning="Pipelines using it will fail until they get a new token."/>
       <Sheet title="Connect a pipeline" meta="Exit codes: 0 passed · 1 failed the policy · 2 error">
         <div className="sheet-body form-grid">
           <div className="field"><span className="field-label">GitHub Actions<CopyButton value={github}/></span><code className="code">{github}</code></div>
@@ -214,7 +193,7 @@ function RetentionSection() {
   const { retention, actions } = useWorkspace();
   return (
     <>
-      <div className="section-intro"><h2>Data retention</h2><p>Every day, DepRadar deletes scans and alert delivery records older than these limits. It always keeps each manifest’s latest upload, work still in progress, and every scan that opened or resolved a finding.</p></div>
+      <div className="section-intro"><h2>Data retention</h2><p>Every day, DepRadar deletes scans, alert delivery records, and AI assistant activity older than these limits. It always keeps each manifest’s latest upload, work still in progress, and every scan that opened or resolved a finding.</p></div>
       <RetentionForm key={JSON.stringify(retention)} retention={retention} onSave={actions.saveRetention} onRun={actions.runRetention}/>
     </>
   );
@@ -229,6 +208,7 @@ function RetentionForm({ retention, onSave, onRun }: { retention: RetentionPolic
         <div className="form-row">
           <label className="field"><span className="field-label">Keep scans for <span>days</span></span><input className="input" type="number" min={1} max={3650} required value={draft.scan_days} onChange={(event) => setDraft({ ...draft, scan_days: Number(event.target.value) })}/></label>
           <label className="field"><span className="field-label">Keep alert deliveries for <span>days</span></span><input className="input" type="number" min={1} max={3650} required value={draft.delivery_days} onChange={(event) => setDraft({ ...draft, delivery_days: Number(event.target.value) })}/></label>
+          <label className="field"><span className="field-label">Keep AI assistant activity for <span>days</span></span><input className="input" type="number" min={1} max={3650} required value={draft.audit_days} onChange={(event) => setDraft({ ...draft, audit_days: Number(event.target.value) })}/></label>
         </div>
         <div className="page-actions"><button className="btn btn-primary" disabled={!dirty}>Save retention</button><button type="button" className="btn btn-secondary" onClick={() => { if (window.confirm("Remove scan and delivery history older than the retention periods now? This cannot be undone.")) void onRun(); }}>Run cleanup now</button></div>
       </form>
