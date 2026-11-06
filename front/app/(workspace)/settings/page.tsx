@@ -120,7 +120,7 @@ function AssistantsSection() {
   const create = () => workspace.setModal({ kind: "token", audience: "mcp" });
   return (
     <>
-      <div className="section-intro"><h2>AI assistants</h2><p>Claude, ChatGPT, Cursor, and other MCP clients can read findings, scans, gate decisions, and package search, and run check scans on lockfiles. Nothing they do changes findings, alerts, or monitored manifests.</p></div>
+      <div className="section-intro"><h2>AI assistants</h2><p>Claude, ChatGPT, Cursor, and other MCP clients can read findings, scans, gate decisions, and package search, and run check scans on lockfiles. Tokens can also be allowed to create projects, rescan stored manifests, and turn monitoring and alerts on or make them stricter. Assistants never change findings, upload manifests, or turn monitoring or alerts off.</p></div>
       {activity && !activity.enabled && <div className="callout is-danger"><Icon name="warning" size={16}/><span>The MCP endpoint is turned off. Set <span className="inline-code">DEPRADAR_MCP_ENABLED=true</span> for the API and restart it.</span></div>}
       <div className="callout"><Icon name="shield" size={16}/><span>Everything an assistant reads is sent to its model provider. Give each assistant its own token, and restrict it to one project for client work.</span></div>
       <TokenSheet tokens={tokensFor(tokens, "mcp")} onCreate={create} emptyText="Create one per person and assistant. Tokens work on the MCP endpoint only, are shown once, and are never included in backups." revokeWarning="The assistant loses access immediately."/>
