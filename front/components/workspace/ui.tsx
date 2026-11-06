@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/icon";
+import { Portal } from "@/components/workspace/portal";
 import { SEVERITIES, severityOf, type Severity } from "@/components/workspace/format";
 
 export function PageHead({ eyebrow, title, lede, actions }: { eyebrow?: string; title: string; lede?: ReactNode; actions?: ReactNode }) {
@@ -142,12 +143,12 @@ export function Drawer({ label, onClose, children }: { label: string; onClose: (
 export function Modal({ title, description, onClose, steps, children }: { title: string; description?: string; onClose: () => void; steps?: [number, number]; children: ReactNode }) {
   const ref = useOverlay(onClose);
   return (
-    <div className="modal-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <Portal><div className="modal-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section ref={ref} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabIndex={-1}>
         {steps && <div className="steps" aria-label={`Step ${steps[0]} of ${steps[1]}`}>{Array.from({ length: steps[1] }, (_, index) => <span key={index} className={index < steps[0] ? "is-done" : ""}/>)}</div>}
         <div className="modal-head"><div><h2 id="modal-title">{title}</h2>{description && <p>{description}</p>}</div><button className="icon-btn" onClick={onClose} aria-label="Close dialog"><Icon name="close"/></button></div>
         {children}
       </section>
-    </div>
+    </div></Portal>
   );
 }
