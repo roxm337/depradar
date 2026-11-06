@@ -108,8 +108,8 @@ export default function PackagesPage() {
 
   return (
     <>
-      <PageHead title="Packages" lede="Find which projects use a package, at which version, across every current monitored manifest. Answers come from the last uploaded manifests, not from what is deployed."/>
-      {unsupported && <div className="callout packages-note"><Icon name="warning" size={16}/><span>This API build does not index packages yet. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span>; manifests are indexed on their next scan.</span></div>}
+      <PageHead title="Packages" lede="Find which projects use a package, and at which version, across every monitored manifest. Answers come from the most recently uploaded manifests, which may differ from what is deployed."/>
+      {unsupported && <div className="callout packages-note"><Icon name="warning" size={16}/><span>Your DepRadar server runs an older version without package search. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span>; each manifest becomes searchable after its next scan.</span></div>}
 
       <form className="toolbar packages-form" role="search" onSubmit={submit}>
         <label className="search-field">
@@ -130,10 +130,10 @@ export default function PackagesPage() {
       {coverageState?.error && !unsupported && !coverage && <div className="callout is-danger packages-note" role="alert"><Icon name="warning" size={16}/><span>{coverageState.error} <button className="link" onClick={retry}>Try again</button></span></div>}
 
       {pending.length > 0 && (
-        <Sheet className="packages-pending" title="Not indexed yet" meta={`${pending.length} ${pending.length === 1 ? "manifest" : "manifests"} · searches skip ${pending.length === 1 ? "it" : "them"} until ${pending.length === 1 ? "it is" : "they are"} scanned again`} actions={pendingIdle.length > 1 ? <button className="btn btn-secondary btn-sm" onClick={() => void actions.rescanAll(pendingIdle.map((snapshot) => snapshot.inventory_id), "manifests without a package index")}><Icon name="refresh" size={14}/>Recheck all</button> : undefined} foot={pending.length > PENDING_PREVIEW ? <button className="link" onClick={() => setShowAllPending((value) => !value)}>{showAllPending ? "Show fewer" : `Show all ${pending.length}`}</button> : undefined}>
+        <Sheet className="packages-pending" title="Not indexed yet" meta={`${pending.length} ${pending.length === 1 ? "manifest" : "manifests"} · searches skip ${pending.length === 1 ? "it" : "them"} until ${pending.length === 1 ? "it is" : "they are"} scanned again`} actions={pendingIdle.length > 1 ? <button className="btn btn-secondary btn-sm" onClick={() => void actions.rescanAll(pendingIdle.map((snapshot) => snapshot.inventory_id), "manifests without a package index")}><Icon name="refresh" size={14}/>Rescan all</button> : undefined} foot={pending.length > PENDING_PREVIEW ? <button className="link" onClick={() => setShowAllPending((value) => !value)}>{showAllPending ? "Show fewer" : `Show all ${pending.length}`}</button> : undefined}>
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Project · manifest</th><th className="col-optional">Uploaded</th><th aria-label="Recheck"/></tr></thead>
+              <thead><tr><th>Project · manifest</th><th className="col-optional">Uploaded</th><th aria-label="Rescan"/></tr></thead>
               <tbody>
                 {pendingShown.map((snapshot) => (
                   <tr key={snapshot.inventory_id}>
@@ -141,7 +141,7 @@ export default function PackagesPage() {
                     <td className="col-optional muted nowrap"><time dateTime={snapshot.uploaded_at} title={dateTime(snapshot.uploaded_at)}>{relativeTime(now, snapshot.uploaded_at)}</time></td>
                     <td className="right">{queued.has(snapshot.inventory_id)
                       ? <span className="status"><span className="spinner"/>Scan queued</span>
-                      : <button className="btn btn-secondary btn-sm" onClick={() => void actions.rescan(snapshot.inventory_id, manifestLabel(snapshot))}><Icon name="refresh" size={14}/>Recheck</button>}</td>
+                      : <button className="btn btn-secondary btn-sm" onClick={() => void actions.rescan(snapshot.inventory_id, manifestLabel(snapshot))}><Icon name="refresh" size={14}/>Rescan</button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -151,7 +151,7 @@ export default function PackagesPage() {
       )}
 
       {coverage && coverage.partial.length > 0 && (
-        <div className="callout is-warn packages-note"><Icon name="warning" size={16}/><p>{coverage.partial.length === 1 ? "1 manifest was" : `${coverage.partial.length} manifests were`} indexed by an incomplete scan, so a package may be missing from {coverage.partial.length === 1 ? "it" : "them"}: {coverage.partial.slice(0, 3).map(manifestLabel).join(", ")}{coverage.partial.length > 3 ? `, and ${coverage.partial.length - 3} more` : ""}.</p></div>
+        <div className="callout is-warn packages-note"><Icon name="warning" size={16}/><p>{coverage.partial.length === 1 ? "1 manifest was" : `${coverage.partial.length} manifests were`} indexed by a scan that could not check every package, so a package may be missing from {coverage.partial.length === 1 ? "it" : "them"}: {coverage.partial.slice(0, 3).map(manifestLabel).join(", ")}{coverage.partial.length > 3 ? `, and ${coverage.partial.length - 3} more` : ""}.</p></div>
       )}
 
       {current?.error && !unsupported && <div className="callout is-danger packages-note" role="alert"><Icon name="warning" size={16}/><span>{current.error} <button className="link" onClick={retry}>Try again</button></span></div>}
@@ -167,7 +167,7 @@ export default function PackagesPage() {
         <Sheet>
           <div className="table-wrap">
             <table className="table packages-table">
-              <thead><tr><th>Package</th><th>Version</th><th>Project · manifest</th><th className="col-optional">Uploaded</th><th className="col-optional">Index</th><th>Open findings</th><th className="col-optional" aria-label="Open"/></tr></thead>
+              <thead><tr><th>Package</th><th>Version</th><th>Project · manifest</th><th className="col-optional">Uploaded</th><th className="col-optional">Indexed by</th><th>Open findings</th><th className="col-optional" aria-label="Open"/></tr></thead>
               <tbody>
                 {searching ? <SkeletonRows rows={5} columns={7}/> : pageRows.map((match) => (
                   <tr key={`${match.snapshot.inventory_id}:${match.ecosystem}:${match.name}:${match.version}`} className="is-link" tabIndex={0} onClick={() => openProject(match.snapshot.project_id)} onKeyDown={(event) => onRowKey(event, match.snapshot.project_id)} aria-label={`${match.name} ${versionLabel(match.version)} in ${manifestLabel(match.snapshot)}`}>
@@ -195,8 +195,8 @@ export default function PackagesPage() {
       )}
 
       {!submitted && !unsupported && coverage && (coverage.snapshots === 0
-        ? <Sheet><Empty icon="layers" title="No monitored manifests yet" text="Package search covers the current monitored manifest of every project. Upload a lockfile or SBOM, or connect a pipeline, and its packages are indexed when the scan finishes." action={<button className="btn btn-primary" onClick={() => workspace.setModal({ kind: "upload" })}><Icon name="upload" size={15}/>Upload manifest</button>}/></Sheet>
-        : <Sheet><Empty icon="layers" title="Search every monitored manifest" text="Enter a package name to see which projects use it, at which version, and how recently each manifest was uploaded. Names match the way their registry compares them, so flask_sqlalchemy also finds Flask-SQLAlchemy."/></Sheet>)}
+        ? <Sheet><Empty icon="layers" title="No monitored manifests yet" text="Package search covers the monitored manifests of every project. Upload a lockfile or SBOM, or connect a pipeline, and its packages become searchable when the scan finishes." action={<button className="btn btn-primary" onClick={() => workspace.setModal({ kind: "upload" })}><Icon name="upload" size={15}/>Upload manifest</button>}/></Sheet>
+        : <Sheet><Empty icon="layers" title="Search every monitored manifest" text="Enter a package name to see which projects use it, at which version, and how recently each manifest was uploaded. Names match the way their package registry compares them, so flask_sqlalchemy also finds Flask-SQLAlchemy."/></Sheet>)}
       {!submitted && coverageLoading && <Sheet><div className="table-wrap"><table className="table"><tbody><SkeletonRows rows={3} columns={3}/></tbody></table></div></Sheet>}
     </>
   );

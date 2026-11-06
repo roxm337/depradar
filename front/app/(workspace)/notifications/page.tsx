@@ -36,7 +36,7 @@ export default function NotificationsPage() {
 
   return (
     <>
-      <PageHead title="Notifications" lede="Where alerts go, when they are sent, and what happened to each delivery. Provider acceptance is recorded; inbox delivery cannot be confirmed."/>
+      <PageHead title="Notifications" lede="Where alerts go, when they are sent, and what happened to each one. DepRadar records when your mail server or Telegram accepts a message, but cannot confirm it reached the inbox."/>
       <div className="notif-grid">
         <Sheet title="Channels" meta="Verified destinations only">
           {(["email", "telegram"] as const).map((channel) => {
@@ -58,7 +58,7 @@ export default function NotificationsPage() {
               </div>
             );
           })}
-          <div className="sheet-foot"><Icon name="lock" size={14}/>SMTP passwords and bot tokens stay in the server environment and never reach this page.</div>
+          <div className="sheet-foot"><Icon name="lock" size={14}/>Mail server passwords and bot tokens are set on the server and never shown on this page.</div>
         </Sheet>
         <PolicyForm key={JSON.stringify(policy)} policy={policy} onSave={actions.savePolicy}/>
       </div>
@@ -82,8 +82,8 @@ export default function NotificationsPage() {
               ))}
             </tbody>
           </table>
-          {ready && !deliveries.length && <Empty icon="bell" title="No deliveries yet" text="Verification messages, alerts, digests, and tests appear here with every provider attempt."/>}
-          {ready && deliveries.length > 0 && !shown.length && <Empty icon="check-circle" title={filter === "failed" ? "No failed deliveries" : "Nothing waiting to send"} text={filter === "failed" ? "Every recorded delivery reached its provider or is still being retried." : "Queued alerts and digests appear here until a provider accepts them."}/>}
+          {ready && !deliveries.length && <Empty icon="bell" title="No deliveries yet" text="Verification messages, alerts, digests, and test messages appear here, with every attempt to send them."/>}
+          {ready && deliveries.length > 0 && !shown.length && <Empty icon="check-circle" title={filter === "failed" ? "No failed deliveries" : "Nothing waiting to send"} text={filter === "failed" ? "Every recorded message was accepted by your mail server or Telegram, or is still being retried." : "Queued alerts and digests appear here until your mail server or Telegram accepts them."}/>}
         </div>
         {ready && shown.length > 0 && <Pagination total={shown.length} page={current} pageSize={pageSize} sizes={[25, 50, 100]} noun="deliveries" onPage={(value) => setPage({ filter, value })} onPageSize={(size) => { setPageSize(size); setPage({ filter, value: 1 }); }}/>}
       </Sheet>
@@ -97,20 +97,20 @@ function PolicyForm({ policy, onSave }: { policy: NotificationPolicy; onSave: (v
   const dirty = JSON.stringify(draft) !== JSON.stringify(policy);
   const quiet = draft.quiet_hours_start !== null;
   return (
-    <Sheet title="Alert policy" meta="Applies to every project unless overridden">
+    <Sheet title="Alert settings" meta="Apply to every project unless the project sets its own level">
       <form className="sheet-body form-grid" onSubmit={(event) => { event.preventDefault(); setBusy(true); void onSave(draft).finally(() => setBusy(false)); }}>
-        <div className="field"><span className="field-label">Send immediately from</span><Segmented label="Immediate threshold" value={draft.immediate_min_severity} onChange={(value) => setDraft({ ...draft, immediate_min_severity: value })} options={[{ value: "critical", label: "Critical" }, { value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }]}/><span className="field-hint">Lower severities wait for the daily digest. Expired or revoked risk acceptances always alert.</span></div>
+        <div className="field"><span className="field-label">Send immediately for this severity and above</span><Segmented label="Immediate threshold" value={draft.immediate_min_severity} onChange={(value) => setDraft({ ...draft, immediate_min_severity: value })} options={[{ value: "critical", label: "Critical" }, { value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }]}/><span className="field-hint">Lower severities wait for the daily digest, one summary message a day. An expired or revoked risk acceptance always sends an alert.</span></div>
         <div className="form-row">
           <label className="field"><span className="field-label">Daily digest at</span><select className="select" value={draft.digest_hour} onChange={(event) => setDraft({ ...draft, digest_hour: Number(event.target.value) })}>{hours.map((hour) => <option key={hour} value={hour}>{pad(hour)}</option>)}</select></label>
           <label className="field"><span className="field-label">Timezone</span><input className="input" list="timezones" value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })}/><datalist id="timezones">{zones.map((zone) => <option key={zone} value={zone}/>)}</datalist></label>
         </div>
-        <div className="toggle-row"><div><b>Quiet hours</b><small>Hold immediate alerts overnight and deliver them when the window ends.</small></div><Switch checked={quiet} label="Quiet hours" onChange={(enabled) => setDraft({ ...draft, quiet_hours_start: enabled ? 22 : null, quiet_hours_end: enabled ? 7 : null })}/></div>
+        <div className="toggle-row"><div><b>Quiet hours</b><small>Hold immediate alerts during these hours and send them when the quiet hours end.</small></div><Switch checked={quiet} label="Quiet hours" onChange={(enabled) => setDraft({ ...draft, quiet_hours_start: enabled ? 22 : null, quiet_hours_end: enabled ? 7 : null })}/></div>
         {quiet && <div className="form-row">
           <label className="field"><span className="field-label">From</span><select className="select" value={draft.quiet_hours_start ?? 22} onChange={(event) => setDraft({ ...draft, quiet_hours_start: Number(event.target.value) })}>{hours.map((hour) => <option key={hour} value={hour}>{pad(hour)}</option>)}</select></label>
           <label className="field"><span className="field-label">Until</span><select className="select" value={draft.quiet_hours_end ?? 7} onChange={(event) => setDraft({ ...draft, quiet_hours_end: Number(event.target.value) })}>{hours.map((hour) => <option key={hour} value={hour}>{pad(hour)}</option>)}</select></label>
         </div>}
-        <div className="toggle-row"><div><b>Include project and package names</b><small>Off keeps external messages generic; details stay in DepRadar.</small></div><Switch checked={draft.include_details} label="Include details" onChange={(include_details) => setDraft({ ...draft, include_details })}/></div>
-        <div className="page-actions"><button className="btn btn-primary" disabled={!dirty || busy}>{busy && <span className="spinner"/>}Save policy</button>{dirty && <button type="button" className="btn btn-ghost" onClick={() => setDraft(policy)}>Discard changes</button>}</div>
+        <div className="toggle-row"><div><b>Include project and package names</b><small>When off, alerts and digests leave out project and package names; open DepRadar to see them.</small></div><Switch checked={draft.include_details} label="Include details" onChange={(include_details) => setDraft({ ...draft, include_details })}/></div>
+        <div className="page-actions"><button className="btn btn-primary" disabled={!dirty || busy}>{busy && <span className="spinner"/>}Save settings</button>{dirty && <button type="button" className="btn btn-ghost" onClick={() => setDraft(policy)}>Discard changes</button>}</div>
       </form>
     </Sheet>
   );

@@ -42,9 +42,9 @@ export function FindingsToolbar({ filters, query, projects, statusCounts, severi
           <option value="all">All projects</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
-        <select className="select" aria-label="Decision" value={filters.decision} onChange={(event) => onFilters({ decision: event.target.value })}>
-          <option value="all">Any decision</option>
-          <option value="open">Awaiting decision</option>
+        <select className="select" aria-label="Review" value={filters.decision} onChange={(event) => onFilters({ decision: event.target.value })}>
+          <option value="all">Any review status</option>
+          <option value="open">Not reviewed</option>
           <option value="acknowledged">Acknowledged</option>
           <option value="risk_accepted">Risk accepted</option>
           <option value="decided">Acknowledged or accepted</option>

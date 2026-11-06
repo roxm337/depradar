@@ -59,7 +59,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const counts: Record<string, number | undefined> = { "/findings": open.length, "/projects": projects.length };
   const services = [
     { label: "API", state: workspace.error ? "Degraded" : "Online", ok: !workspace.error },
-    { label: "Worker", state: health ? (health.worker === "healthy" ? "Running" : "Not reporting") : "Unknown", ok: health?.worker === "healthy" },
+    { label: "Background worker", state: health ? (health.worker === "healthy" ? "Running" : "Not reporting") : "Unknown", ok: health?.worker === "healthy" },
     { label: "Scanner", state: health ? (health.scanner === "healthy" ? "Ready" : health.scanner === "unavailable" ? "Unavailable" : "Not reporting") : "Unknown", ok: health?.scanner === "healthy" },
   ];
   const problems = services.filter((service) => !service.ok && service.state !== "Unknown");
@@ -159,7 +159,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
         <main className="page" id="content" tabIndex={-1}>
           {workspace.error && <div className="banner" role="alert"><Icon name="warning" size={16}/>Refresh failed: {workspace.error}. Data may be out of date.<button onClick={() => void workspace.actions.refresh()}>Retry</button></div>}
-          {workspace.upgradeHint && <div className="banner" role="status"><Icon name="warning" size={16}/>The API runs an older build, so manifest freshness is unavailable. Rebuild with <code className="inline-code">docker compose up --build -d api worker</code>.</div>}
+          {workspace.upgradeHint && <div className="banner" role="status"><Icon name="warning" size={16}/>Your DepRadar server runs an older version, so the dashboard cannot show its manifests or when they were uploaded. Rebuild with <code className="inline-code">docker compose up --build -d api worker</code>.</div>}
           {children}
         </main>
       </div>

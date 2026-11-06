@@ -37,7 +37,7 @@ function download(name: string, text: string, type: string) {
 
 function DecisionCell({ finding }: { finding: Finding }) {
   const decision = decisionOf(finding);
-  if (decision.kind === "awaiting") return <span className="muted">Awaiting</span>;
+  if (decision.kind === "awaiting") return <span className="muted">Not reviewed</span>;
   const tone = decision.kind === "resolved" ? "tag-ok" : decision.kind === "accepted" ? "tag-info" : "";
   return <span className={`tag ${tone}`} title={decision.label}>{decision.kind === "accepted" ? "Risk accepted" : decision.label}</span>;
 }
@@ -144,7 +144,7 @@ export default function FindingsPage() {
 
   return (
     <>
-      <PageHead title="Findings" lede="Every vulnerable package version across your projects. Decisions stay with each finding, and only a complete clean scan resolves one."/>
+      <PageHead title="Findings" lede="Every vulnerable package version found in your projects. Your review (acknowledged or risk accepted) stays with each finding. A finding is resolved only when a complete scan no longer finds it."/>
       <FindingsToolbar
         filters={filters}
         query={query}
@@ -179,7 +179,7 @@ export default function FindingsPage() {
                 {shown("fixed") && sortHeader("fixed", "Fixed in", "col-optional col-fixed")}
                 {shown("signals") && sortHeader("epss", "Exploit risk", "col-optional col-signals")}
                 {shown("age") && sortHeader("age", COLUMN_LABEL.age, "col-optional col-age")}
-                {shown("decision") && <th className="col-optional col-decision">Decision</th>}
+                {shown("decision") && <th className="col-optional col-decision">Review</th>}
                 <th aria-label="Actions"/>
               </tr>
             </thead>
@@ -194,10 +194,10 @@ export default function FindingsPage() {
                     {shown("project") && <td className="col-optional col-project"><div className="cell-main"><span className="cell-truncate">{names.get(finding.project_id) ?? "—"}</span><span className="path" title={finding.target_path}>{finding.target_path}</span></div></td>}
                     {shown("advisory") && <td className="col-optional col-advisory nowrap"><span className="mono advisory-id" title={finding.advisory_ids.join(", ")}>{primaryAdvisory(finding.advisory_ids)}</span>{finding.advisory_ids.length > 1 && <span className="muted"> +{finding.advisory_ids.length - 1}</span>}</td>}
                     {shown("fixed") && <td className="col-optional col-fixed nowrap">{finding.fixed_versions[0] ? <span className="mono">{finding.fixed_versions[0]}</span> : <span className="muted">No fix yet</span>}</td>}
-                    {shown("signals") && <td className="col-optional col-signals"><span className="signal-cell">{finding.kev_known && <span className="tag tag-kev" title="Listed in the CISA Known Exploited Vulnerabilities catalog">KEV</span>}{finding.epss_score !== null && <span className="epss" title="EPSS: probability of exploitation in the next 30 days">{epssPercent(finding.epss_score)}</span>}{!finding.kev_known && finding.epss_score === null && <span className="muted">—</span>}</span></td>}
+                    {shown("signals") && <td className="col-optional col-signals"><span className="signal-cell">{finding.kev_known && <span className="tag tag-kev" title="Known exploited: listed in CISA’s Known Exploited Vulnerabilities catalog">KEV</span>}{finding.epss_score !== null && <span className="epss" title="EPSS: estimated probability that this vulnerability is exploited in the next 30 days">{epssPercent(finding.epss_score)}</span>}{!finding.kev_known && finding.epss_score === null && <span className="muted">—</span>}</span></td>}
                     {shown("age") && <td className="col-optional col-age muted num nowrap"><time dateTime={finding.first_seen_at} title={`First detected ${dateTime(finding.first_seen_at)}`}>{ageLabel(now, finding.first_seen_at)}</time></td>}
                     {shown("decision") && <td className="col-optional col-decision"><DecisionCell finding={finding}/></td>}
-                    <td className="right">{acknowledgeable(finding) && <button className="icon-btn row-action" onClick={(event) => { event.stopPropagation(); void actions.acknowledge(finding); }} title="Acknowledge (A): mute alerts while you work on it" aria-label={`Acknowledge ${finding.package_name}`}><Icon name="check" size={15}/></button>}</td>
+                    <td className="right">{acknowledgeable(finding) && <button className="icon-btn row-action" onClick={(event) => { event.stopPropagation(); void actions.acknowledge(finding); }} title="Acknowledge (A): stop alerts about it while you work on a fix" aria-label={`Acknowledge ${finding.package_name}`}><Icon name="check" size={15}/></button>}</td>
                   </tr>
                 );
               })}
@@ -214,7 +214,7 @@ export default function FindingsPage() {
         <div className="bulk-bar" role="region" aria-label="Selected findings">
           <span className="num"><b>{chosen.length}</b> selected</span>
           <span className="bulk-sep" aria-hidden="true"/>
-          <button className="btn btn-primary btn-sm" disabled={!ackable.length || busy} onClick={() => void acknowledgeSelection(ackable)} title={ackable.length ? undefined : "Only open findings awaiting a decision can be acknowledged"}>{busy ? <span className="spinner"/> : <Icon name="check" size={14}/>}Acknowledge{ackable.length !== chosen.length ? ` ${ackable.length}` : ""}</button>
+          <button className="btn btn-primary btn-sm" disabled={!ackable.length || busy} onClick={() => void acknowledgeSelection(ackable)} title={ackable.length ? undefined : "Only open findings that are not reviewed yet can be acknowledged"}>{busy ? <span className="spinner"/> : <Icon name="check" size={14}/>}Acknowledge{ackable.length !== chosen.length ? ` ${ackable.length}` : ""}</button>
           <button className="btn btn-secondary btn-sm" onClick={() => download(csvFileName(new Date()), toCsv(chosen, names), "text/csv;charset=utf-8")}><Icon name="download" size={14}/>Export</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(NO_IDS)}>Clear<Kbd>Esc</Kbd></button>
         </div>

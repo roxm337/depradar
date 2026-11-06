@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, json, setCsrfToken, UNAUTHORIZED_EVENT, type ApiToken, type Connector, type CreatedApiToken, type DecisionDetail, type DecisionSummary, type Delivery, type DeliveryAttempt, type Finding, type FindingDecision, type Identities, type IdentityInput, type Inventory, type NotificationPolicy, type OperationsHealth, type Policies, type PolicyRules, type PolicyVersion, type Project, type ReportFormat, type RetentionPolicy, type Scan, type TrustedIdentity } from "@/lib/api";
-import { supportedInventory } from "@/components/workspace/format";
+import { cadence, channelLabel, supportedInventory } from "@/components/workspace/format";
 import { defaultFilters, type FindingFilters } from "@/components/workspace/findings-logic";
 import { DEFAULT_RULES, normalizeRules, reportFile } from "@/components/workspace/policy-logic";
 
@@ -225,24 +225,24 @@ function useWorkspaceState() {
     },
     uploadInventory: async ({ projectId: target, file, targetPath, revision }: UploadInput) => {
       if (!supportedInventory(file.name)) { notify("error", "This file type is not a supported lockfile or SBOM."); return false; }
-      if (file.size > 10 * 1024 * 1024) { notify("error", "Inventory files must be 10 MB or smaller."); return false; }
+      if (file.size > 10 * 1024 * 1024) { notify("error", "Manifests must be 10 MB or smaller."); return false; }
       const params = new URLSearchParams({ filename: file.name });
       if (targetPath.trim()) params.set("target_path", targetPath.trim());
       if (revision.trim()) params.set("revision", revision.trim());
-      return run(async () => api(`projects/${target}/inventories?${params}`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: await file.arrayBuffer() }), "Inventory uploaded. The scan is queued.");
+      return run(async () => api(`projects/${target}/inventories?${params}`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: await file.arrayBuffer() }), "Manifest uploaded. Its scan is queued.");
     },
     rescan: (inventoryId: string, label: string) => run(() => api(`inventories/${inventoryId}/scans`, json("POST", {})), `A fresh scan was queued for ${label}.`),
     retireTarget: async (project: Project, targetPath: string) => {
       try {
         const result = await api<{ resolved_findings: number }>(`projects/${project.id}/targets/retire`, json("POST", { target_path: targetPath }));
         const resolved = result.resolved_findings;
-        notify("success", `${targetPath} retired. ${resolved} open finding${resolved === 1 ? "" : "s"} resolved without alerts; history is kept.`);
+        notify("success", `${targetPath} retired. ${resolved} open finding${resolved === 1 ? " was" : "s were"} resolved without alerts, and the history is kept.`);
         await load();
         return true;
       } catch (failure) { notify("error", message(failure, "Could not retire the manifest.")); return false; }
     },
     rescanAll: (inventoryIds: string[], label: string) => run(() => Promise.all(inventoryIds.map((id) => api(`inventories/${id}/scans`, json("POST", {})))), `${inventoryIds.length} scans queued for ${label}.`),
-    setMonitoring: (project: Project, enabled: boolean, hours: number) => run(() => api(`projects/${project.id}/monitoring`, json("PUT", { enabled, interval_hours: hours })), enabled ? `Monitoring ${project.name} every ${hours}h.` : `Monitoring paused for ${project.name}.`),
+    setMonitoring: (project: Project, enabled: boolean, hours: number) => run(() => api(`projects/${project.id}/monitoring`, json("PUT", { enabled, interval_hours: hours })), enabled ? `${project.name} is now scanned ${cadence(hours)}.` : `Scheduled scans paused for ${project.name}.`),
     setAlerts: (project: Project, enabled: boolean, threshold: string) => run(() => api(`projects/${project.id}/notifications`, json("PUT", { enabled, immediate_min_severity: threshold })), `Alert settings saved for ${project.name}.`),
     // Acknowledges many findings in batches, reloads once, and reports how many did not go through.
     bulkAcknowledge: async (targets: Finding[]) => {
@@ -260,7 +260,7 @@ function useWorkspaceState() {
     },
     acknowledge: (finding: Finding) => run(() => api(`findings/${finding.id}/acknowledge`, json("POST", { note: "" })), `${finding.package_name} acknowledged.`),
     acceptRisk: (finding: Finding, reason: string, expiresAt: string) => run(() => api(`findings/${finding.id}/risk-acceptance`, json("POST", { reason, expires_at: expiresAt })), "Risk acceptance recorded."),
-    clearDecision: (finding: Finding) => run(() => api(finding.workflow_status === "risk_accepted" ? `findings/${finding.id}/risk-acceptance` : `findings/${finding.id}/acknowledge`, { method: "DELETE" }), "Decision cleared; the finding needs review again."),
+    clearDecision: (finding: Finding) => run(() => api(finding.workflow_status === "risk_accepted" ? `findings/${finding.id}/risk-acceptance` : `findings/${finding.id}/acknowledge`, { method: "DELETE" }), "Review removed; the finding needs review again."),
     loadDecisions: (id: string) => api<FindingDecision[]>(`findings/${id}/decisions`),
     configureEmail: async (input: EmailInput) => {
       try { await api("connectors/email", json("PUT", { ...input, enabled: true })); notify("success", "Verification code sent. Check the recipient inbox."); return true; }
@@ -278,15 +278,15 @@ function useWorkspaceState() {
         notify("success", "Telegram connected."); await load(); return true;
       } catch (failure) { notify("error", message(failure, "Telegram pairing could not be confirmed.")); return false; }
     },
-    connectorAction: (channel: string, action: "test" | "enable" | "disable") => run(() => api(`connectors/${channel}/${action}`, json("POST", {})), action === "test" ? `Test message queued for ${channel}.` : action === "enable" ? `${channel} alerts resumed.` : `${channel} alerts paused.`),
-    savePolicy: (value: NotificationPolicy) => run(() => api("notifications/policy", json("PUT", value)), "Alert policy saved."),
+    connectorAction: (channel: string, action: "test" | "enable" | "disable") => run(() => api(`connectors/${channel}/${action}`, json("POST", {})), action === "test" ? `${channelLabel(channel)} test message queued.` : action === "enable" ? `${channelLabel(channel)} alerts resumed.` : `${channelLabel(channel)} alerts paused.`),
+    savePolicy: (value: NotificationPolicy) => run(() => api("notifications/policy", json("PUT", value)), "Alert settings saved."),
     saveRetention: (value: RetentionPolicy) => run(() => api("maintenance/retention", json("PUT", value)), "Retention saved."),
     runRetention: async () => {
       try { const result = await api<{ files_removed: number }>("maintenance/retention/run", json("POST", {})); notify("success", `Cleanup finished. ${result.files_removed} stored files removed.`); await load(); }
       catch (failure) { notify("error", message(failure, "Retention cleanup failed.")); }
     },
     loadAttempts: (id: string) => api<DeliveryAttempt[]>(`notifications/deliveries/${id}/attempts`),
-    retryDelivery: (delivery: Delivery) => run(() => api(`notifications/deliveries/${delivery.id}/retry`, json("POST", {})), "Delivery queued again."),
+    retryDelivery: (delivery: Delivery) => run(() => api(`notifications/deliveries/${delivery.id}/retry`, json("POST", {})), "Message queued to send again."),
     createToken: async (input: { name: string; scopes: ApiToken["scopes"]; project_id: string | null; expires_in_days: number }) => {
       try { return await api<CreatedApiToken>("tokens", json("POST", input)); }
       catch (failure) { notify("error", message(failure, "Could not create the token.")); return null; }
@@ -295,15 +295,15 @@ function useWorkspaceState() {
     saveInstallationPolicy: async (rules: PolicyRules, note: string) => {
       try {
         const saved = await api<PolicyVersion>("policies/installation", json("PUT", { rules, note }));
-        notify("success", `Installation policy saved as version ${saved.version}. It applies to the next gate decision.`);
+        notify("success", `Global policy saved as version ${saved.version}. It applies from the next pipeline run.`);
         await load();
         return true;
-      } catch (failure) { notify("error", message(failure, "Could not save the installation policy.")); return false; }
+      } catch (failure) { notify("error", message(failure, "Could not save the global policy.")); return false; }
     },
     saveProjectPolicy: async (project: Project, rules: PolicyRules | null, note: string) => {
       try {
         const saved = await api<PolicyVersion>(`policies/projects/${project.id}`, json("PUT", { rules, note }));
-        notify("success", rules ? `Policy for ${project.name} saved as version ${saved.version}.` : `${project.name} now follows the installation policy.`);
+        notify("success", rules ? `Policy for ${project.name} saved as version ${saved.version}.` : `${project.name} now follows the global policy.`);
         await load();
         return true;
       } catch (failure) { notify("error", message(failure, "Could not save the project policy.")); return false; }
@@ -339,7 +339,7 @@ function useWorkspaceState() {
         return created;
       } catch (failure) { notify("error", message(failure, "Could not add the trusted identity.")); return null; }
     },
-    removeIdentity: (identity: TrustedIdentity) => run(() => api(`identities/${identity.id}`, { method: "DELETE" }), `${identity.repository} can no longer exchange pipeline identities.`),
+    removeIdentity: (identity: TrustedIdentity) => run(() => api(`identities/${identity.id}`, { method: "DELETE" }), `${identity.repository} can no longer sign in from its pipeline.`),
   };
 
   return {

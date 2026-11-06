@@ -22,14 +22,14 @@ export function IdentitiesSection() {
 
   return (
     <>
-      <div className="section-intro"><h2>Trusted identities</h2><p>GitHub Actions and GitLab CI sign in with the short-lived OIDC token every job can request, so there is no long-lived secret to leak or rotate. Pull and merge request runs only get check access; only the trusted branch and workflow can update monitored manifests.</p></div>
-      {!features.identities && <div className="callout"><Icon name="warning" size={16}/><span>This API build does not accept OIDC identities yet. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span> to enable them; tokens keep working meanwhile.</span></div>}
+      <div className="section-intro"><h2>Trusted identities</h2><p>GitHub Actions and GitLab CI jobs can sign in with a temporary token (OIDC) that GitHub or GitLab issues for each run, so there is no stored secret to leak or replace. Pull and merge request runs can only check changes; only the branch and workflow you trust can update monitored manifests.</p></div>
+      {!features.identities && <div className="callout"><Icon name="warning" size={16}/><span>Your DepRadar server runs an older version that does not accept trusted identities. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span> to enable them; tokens keep working meanwhile.</span></div>}
       <div className="identity-steps" aria-label="How a pipeline signs in">
-        <div><span className="identity-step">1</span><b>The job requests an OIDC token</b><small>for this installation’s audience</small></div>
-        <div><span className="identity-step">2</span><b>DepRadar verifies it</b><small>issuer signature, repository, workflow, and branch</small></div>
-        <div><span className="identity-step">3</span><b>The job gets 30 minutes of access</b><small>to one project: check, or monitor on the trusted branch</small></div>
+        <div><span className="identity-step">1</span><b>The job requests a temporary token</b><small>from GitHub or GitLab, for this DepRadar server’s audience</small></div>
+        <div><span className="identity-step">2</span><b>DepRadar verifies it</b><small>who signed it, and the repository, workflow, and branch</small></div>
+        <div><span className="identity-step">3</span><b>The job gets 30 minutes of access</b><small>to one project: checks only, or also updating monitored manifests on the trusted branch</small></div>
       </div>
-      <Sheet title="Audience" meta="Pipelines request their OIDC token for this value">
+      <Sheet title="Audience" meta="Pipelines request their token for this value, so it only works on this DepRadar server">
         <div className="sheet-body identity-audience">
           {audience ? <><code className="mono">{audience}</code><CopyButton value={audience} label="Copy audience"/></> : <span className="muted">Shown once the API reports it.</span>}
         </div>
@@ -37,12 +37,12 @@ export function IdentitiesSection() {
       <Sheet title="Identities" meta={rows.length ? `${active} active` : undefined} actions={<button className="btn btn-primary btn-sm" disabled={!features.identities || !projects.length} onClick={() => setAdding(true)}><Icon name="plus" size={14}/>Add identity</button>}>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Repository</th><th className="col-optional">Project</th><th className="col-optional">Workflow</th><th>Can monitor</th><th className="col-optional">Last used</th><th>Status</th><th aria-label="Actions"/></tr></thead>
+            <thead><tr><th>Repository</th><th className="col-optional">Project</th><th className="col-optional">Workflow</th><th>Monitored branch</th><th className="col-optional">Last used</th><th>Status</th><th aria-label="Actions"/></tr></thead>
             <tbody>{rows.map((row) => {
               const state = identityState(row);
               return (
                 <tr key={row.id} className={row.disabled_at ? "is-disabled" : ""}>
-                  <td><div className="cell-main"><b className="mono identity-repo" title={row.repository}>{row.repository}</b><small>{providerName(row.provider)} · {row.repository_id ? <>ID <span className="mono">{row.repository_id}</span></> : "ID pinned on first run"}{row.issuer !== DEFAULT_ISSUER[row.provider] ? <> · <span title={row.issuer}>self-hosted</span></> : ""}</small></div></td>
+                  <td><div className="cell-main"><b className="mono identity-repo" title={row.repository}>{row.repository}</b><small>{providerName(row.provider)} · {row.repository_id ? <>ID <span className="mono">{row.repository_id}</span></> : "ID saved on first run"}{row.issuer !== DEFAULT_ISSUER[row.provider] ? <> · <span title={row.issuer}>self-hosted</span></> : ""}</small></div></td>
                   <td className="col-optional">{projectName(projects, row.project_id)}</td>
                   <td className="col-optional">{row.workflow ? <span className="mono identity-workflow" title={row.workflow}>{row.workflow}</span> : <span className="muted">Any workflow</span>}</td>
                   <td>{row.monitor_ref ? <span className="mono" title={row.monitor_ref}>{refLabel(row.monitor_ref)}</span> : <span className="tag tag-check">Checks only</span>}</td>
@@ -53,7 +53,7 @@ export function IdentitiesSection() {
               );
             })}</tbody>
           </table>
-          {!rows.length && <Empty icon="lock" title="No trusted identities yet" text={projects.length ? "Bind a repository to a project. Its jobs then sign in with OIDC instead of a stored token." : "Create a project first, then bind its repository here."} action={projects.length ? <button className="btn btn-primary" disabled={!features.identities} onClick={() => setAdding(true)}><Icon name="plus" size={15}/>Add the first identity</button> : undefined}/>}
+          {!rows.length && <Empty icon="lock" title="No trusted identities yet" text={projects.length ? "Link a repository to a project. Its jobs then sign in with a temporary token instead of a stored one." : "Create a project first, then link its repository here."} action={projects.length ? <button className="btn btn-primary" disabled={!features.identities} onClick={() => setAdding(true)}><Icon name="plus" size={15}/>Add the first identity</button> : undefined}/>}
         </div>
       </Sheet>
       {adding && <Portal><IdentityDialog url={url} audience={audience} onClose={() => setAdding(false)}/></Portal>}
@@ -78,7 +78,7 @@ function IdentityDialog({ url, audience, onClose }: { url: string; audience: str
   const [created, setCreated] = useState<TrustedIdentity | null>(null);
   const problem = repositoryProblem(provider, repository);
   const idProblem = repositoryId.trim() && !/^\d{1,20}$/.test(repositoryId.trim()) ? "Repository IDs are numbers." : null;
-  const branchProblem = monitor && !branch.trim() ? "Enter the branch whose runs may update monitored state." : null;
+  const branchProblem = monitor && !branch.trim() ? "Enter the branch whose runs may update monitored manifests." : null;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -105,7 +105,7 @@ function IdentityDialog({ url, audience, onClose }: { url: string; audience: str
         <div className="modal-body">
           <div className="field"><span className="field-label">{created.provider === "github" ? "GitHub Actions workflow" : ".gitlab-ci.yml"}<CopyButton value={snippet}/></span><code className="code">{snippet}</code></div>
           <div className="field"><span className="field-label">Audience<CopyButton value={audience} label="Copy"/></span><code className="code">{audience}</code></div>
-          <div className="callout"><Icon name="lock" size={16}/><span>{created.monitor_ref ? <>Runs on <b className="mono">{refLabel(created.monitor_ref)}</b>{created.workflow ? <> from <b className="mono">{created.workflow}</b></> : ""} update monitored manifests. Every other run, including pull and merge requests, is check-only.</> : <>Every run is check-only: it gates the change but never updates monitored manifests.</>}</span></div>
+          <div className="callout"><Icon name="lock" size={16}/><span>{created.monitor_ref ? <>Runs on <b className="mono">{refLabel(created.monitor_ref)}</b>{created.workflow ? <> from <b className="mono">{created.workflow}</b></> : ""} update monitored manifests. Every other run, including pull and merge requests, can only check changes.</> : <>Every run can only check changes: it passes or fails them but never updates monitored manifests.</>}</span></div>
         </div>
         <div className="modal-foot"><button className="btn btn-primary" data-autofocus onClick={onClose}><Icon name="check" size={15}/>Done</button></div>
       </Dialog>
@@ -113,7 +113,7 @@ function IdentityDialog({ url, audience, onClose }: { url: string; audience: str
   }
 
   return (
-    <Dialog title="Add a trusted identity" description="Bind a repository’s CI jobs to one project. DepRadar checks every OIDC token against these rules before granting access." onClose={onClose} steps={[1, 2]}>
+    <Dialog title="Add a trusted identity" description="Link a repository’s CI jobs to one project. DepRadar checks each job’s sign-in token against these rules before giving access." onClose={onClose} steps={[1, 2]}>
       <form onSubmit={submit} noValidate>
         <div className="modal-body dialog-scroll">
           <div className="field"><span className="field-label">Provider</span><Segmented label="Provider" value={provider} onChange={(value) => { setProvider(value); setIssuer(""); }} options={[{ value: "github", label: "GitHub Actions" }, { value: "gitlab", label: "GitLab CI" }]}/></div>
@@ -130,17 +130,17 @@ function IdentityDialog({ url, audience, onClose }: { url: string; audience: str
           </label>
           <label className="field"><span className="field-label">Repository ID <span>Recommended</span></span>
             <input className="input mono" value={repositoryId} onChange={(event) => setRepositoryId(event.target.value)} inputMode="numeric" placeholder="123456789" aria-invalid={Boolean(idProblem)} aria-describedby="identity-id-hint" autoComplete="off"/>
-            <span className={idProblem ? "field-error" : "field-hint"} id="identity-id-hint">{idProblem ?? (provider === "github" ? <>Run <span className="inline-code">gh api repos/OWNER/REPO --jq .id</span>. The ID survives renames and rejects a deleted and re-created repository. Left empty, the first verified run’s ID is pinned.</> : "Shown as Project ID on the GitLab project’s overview page. It survives renames and transfers. Left empty, the first verified run’s ID is pinned.")}</span>
+            <span className={idProblem ? "field-error" : "field-hint"} id="identity-id-hint">{idProblem ?? (provider === "github" ? <>Run <span className="inline-code">gh api repos/OWNER/REPO --jq .id</span>. The ID stays the same when the repository is renamed, and it blocks a deleted repository that someone re-creates under the same name. If you leave it empty, DepRadar saves the ID from the first verified run.</> : "Shown as Project ID on the GitLab project’s overview page. It stays the same when the project is renamed or moved. If you leave it empty, DepRadar saves the ID from the first verified run.")}</span>
           </label>
           <label className="field"><span className="field-label">Trusted workflow <span>Optional</span></span>
             <input className="input mono" value={workflow} onChange={(event) => setWorkflow(event.target.value)} placeholder={WORKFLOW_PLACEHOLDER[provider]} autoComplete="off" spellCheck={false}/>
             <span className="field-hint">Only this {provider === "github" ? "workflow file" : "CI configuration"} may sign in. Leave it empty to accept any workflow in the repository.</span>
           </label>
           <div className="field">
-            <span className="field-label">Monitored state</span>
-            <div className="choice-list" role="radiogroup" aria-label="Monitored state">
-              <button type="button" role="radio" className="choice" aria-checked={monitor} onClick={() => setMonitor(true)}><span className="radio"/><b>Update it from a protected branch</b><small>Runs on this branch keep manifests current. Pull and merge requests stay check-only.</small></button>
-              <button type="button" role="radio" className="choice" aria-checked={!monitor} onClick={() => setMonitor(false)}><span className="radio"/><b>Checks only</b><small>Every run gates the change and nothing updates monitored manifests.</small></button>
+            <span className="field-label">Monitored manifests</span>
+            <div className="choice-list" role="radiogroup" aria-label="Monitored manifests">
+              <button type="button" role="radio" className="choice" aria-checked={monitor} onClick={() => setMonitor(true)}><span className="radio"/><b>Update them from one branch</b><small>Runs on this branch upload the manifests DepRadar monitors. Pull and merge requests can only check changes.</small></button>
+              <button type="button" role="radio" className="choice" aria-checked={!monitor} onClick={() => setMonitor(false)}><span className="radio"/><b>Checks only</b><small>Every run passes or fails the change, and no run updates monitored manifests.</small></button>
             </div>
             {monitor && (
               <label className="identity-branch"><span className="sr-only">Branch</span>
@@ -170,7 +170,7 @@ function RemoveIdentity({ identity, onClose }: { identity: TrustedIdentity; onCl
   return (
     <ConfirmDialog title={`Remove ${identity.repository}?`} confirmLabel="Remove identity" busy={busy} onClose={onClose} onConfirm={async () => { setBusy(true); if (await actions.removeIdentity(identity)) onClose(); setBusy(false); }}>
       <p>Its jobs can no longer sign in to {projectName(projects, identity.project_id)}, and access they were granted in the last 30 minutes is revoked now.</p>
-      <p className="muted">Recorded decisions keep the verified run details. Pipelines need a token or a new identity to run again.</p>
+      <p className="muted">Past gate decisions keep the details of the runs that made them. Its pipelines need a token or a new identity to run again.</p>
     </ConfirmDialog>
   );
 }

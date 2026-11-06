@@ -7,20 +7,20 @@ import type { PolicyRules, Threshold } from "@/lib/api";
 import "./rule-editor.css";
 
 const REQUIRE_COPY: Record<RequireRule, { title: string; detail: string }> = {
-  fail_on_kev: { title: "Known exploited vulnerabilities", detail: "Fail on CVEs in the CISA KEV catalog, whatever their severity." },
-  fail_on_unknown: { title: "Unknown severity", detail: "Fail on advisories that publish no severity." },
-  fail_on_incomplete: { title: "Complete coverage", detail: "Fail when the scanner cannot cover every package, such as private registries or unpinned versions." },
-  require_monitored_manifests: { title: "Every monitored manifest", detail: "Fail when a manifest the project monitors is missing from the decision." },
+  fail_on_kev: { title: "Known exploited vulnerabilities", detail: "Fail on any vulnerability in CISA’s Known Exploited Vulnerabilities (KEV) catalog, the list of flaws attackers are actively using, whatever its severity." },
+  fail_on_unknown: { title: "Unknown severity", detail: "Fail on vulnerabilities whose advisory gives no severity rating." },
+  fail_on_incomplete: { title: "Complete coverage", detail: "Fail when the scanner cannot check every package, for example packages from a private registry or without an exact version." },
+  require_monitored_manifests: { title: "Every monitored manifest", detail: "Fail when the pipeline run does not scan every manifest DepRadar monitors for the project." },
 };
 const ALLOW_COPY: Record<AllowRule, { title: string; detail: string }> = {
-  allow_new_only: { title: "Gate new findings only", detail: "Lets a pipeline pass --new-only, which ignores findings already open in the project." },
-  allow_ignore_acknowledged: { title: "Ignore acknowledged findings", detail: "Lets a pipeline pass --ignore-acknowledged. Accepted risk is always honored until it expires." },
+  allow_new_only: { title: "Check new findings only", detail: "Lets a pipeline use --new-only, so only vulnerabilities the change introduces can fail it. Findings already open in the project are ignored." },
+  allow_ignore_acknowledged: { title: "Ignore acknowledged findings", detail: "Lets a pipeline use --ignore-acknowledged, so acknowledged findings do not fail it. Findings with accepted risk never fail it until the acceptance expires." },
 };
 // Severity choices read from least to most strict.
 const ORDER: Threshold[] = ["none", "critical", "high", "medium", "low"];
 
 function Locked() {
-  return <span className="tag tag-muted rule-lock"><Icon name="lock" size={11}/>Set by installation policy</span>;
+  return <span className="tag tag-muted rule-lock"><Icon name="lock" size={11}/>Set by the global policy</span>;
 }
 
 /**
@@ -45,13 +45,13 @@ export function RuleEditor({ value, onChange, floor, idPrefix, autoFocus = false
           {ORDER.map((option) => {
             const locked = locks?.thresholds.includes(option) ?? false;
             return (
-              <button key={option} type="button" aria-pressed={effective.fail_on === option} data-autofocus={autoFocus && effective.fail_on === option ? true : undefined} disabled={locked} title={locked ? "Weaker than the installation policy" : undefined} onClick={() => set("fail_on", option)}>
+              <button key={option} type="button" aria-pressed={effective.fail_on === option} data-autofocus={autoFocus && effective.fail_on === option ? true : undefined} disabled={locked} title={locked ? "Less strict than the global policy" : undefined} onClick={() => set("fail_on", option)}>
                 {THRESHOLD_LABEL[option]}
               </button>
             );
           })}
         </div>
-        <span className="field-hint">{thresholdText(effective.fail_on)}.{floor && locks && locks.thresholds.length > 0 ? ` The installation requires ${thresholdText(floor.fail_on).toLowerCase()}, so weaker options are unavailable.` : ""}</span>
+        <span className="field-hint">{thresholdText(effective.fail_on)}.{floor && locks && locks.thresholds.length > 0 ? ` The global policy requires ${thresholdText(floor.fail_on).toLowerCase()}, so less strict options are unavailable.` : ""}</span>
       </div>
 
       <div className="rule-group" role="group" aria-label="Always fail on">
@@ -68,7 +68,7 @@ export function RuleEditor({ value, onChange, floor, idPrefix, autoFocus = false
         <div className="toggle-row rule-epss">
           <span>
             <b>EPSS threshold{locks?.epss && <Locked/>}</b>
-            <small>Fail when a CVE’s probability of exploitation in the next 30 days reaches this value.</small>
+            <small>Fail when a vulnerability’s EPSS score, the estimated probability that it is exploited in the next 30 days, reaches this value.</small>
             {epss !== null && (
               <span className="rule-epss-field">
                 <label htmlFor={`${idPrefix}-epss`} className="sr-only">EPSS threshold, 0 to 1</label>
