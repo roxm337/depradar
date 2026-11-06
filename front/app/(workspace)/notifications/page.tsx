@@ -109,7 +109,7 @@ function PolicyForm({ policy, onSave }: { policy: NotificationPolicy; onSave: (v
           <label className="field"><span className="field-label">From</span><select className="select" value={draft.quiet_hours_start ?? 22} onChange={(event) => setDraft({ ...draft, quiet_hours_start: Number(event.target.value) })}>{hours.map((hour) => <option key={hour} value={hour}>{pad(hour)}</option>)}</select></label>
           <label className="field"><span className="field-label">Until</span><select className="select" value={draft.quiet_hours_end ?? 7} onChange={(event) => setDraft({ ...draft, quiet_hours_end: Number(event.target.value) })}>{hours.map((hour) => <option key={hour} value={hour}>{pad(hour)}</option>)}</select></label>
         </div>}
-        <div className="toggle-row"><div><b>Include project and package names</b><small>When off, alerts and digests leave out project and package names; open DepRadar to see them.</small></div><Switch checked={draft.include_details} label="Include details" onChange={(include_details) => setDraft({ ...draft, include_details })}/></div>
+        <div className="toggle-row"><div><b>Include project and package names</b><small>Turn on to show project and package names in notifications. Turn off to hide these names; you can still see them in DepRadar.</small></div><Switch checked={draft.include_details} label="Include details" onChange={(include_details) => setDraft({ ...draft, include_details })}/></div>
         <div className="page-actions"><button className="btn btn-primary" disabled={!dirty || busy}>{busy && <span className="spinner"/>}Save settings</button>{dirty && <button type="button" className="btn btn-ghost" onClick={() => setDraft(policy)}>Discard changes</button>}</div>
       </form>
     </Sheet>

@@ -516,6 +516,10 @@ button.list-row:hover { background: var(--surface-2); }
 .settings-panel { display: grid; gap: 16px; animation: rise 0.2s var(--ease) both; }
 .section-intro h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
 .section-intro p { margin-top: 3px; color: var(--text-3); max-width: 68ch; }
+.token-guide { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.token-guide summary { padding: 10px 12px; cursor: pointer; color: var(--text-2); font-weight: 550; }
+.token-guide summary:hover { color: var(--text); background: var(--surface-2); }
+.token-guide p { margin: 0; padding: 0 12px 12px; }
 .ops-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .ops-cell { padding: 14px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
 .ops-cell:not(:nth-child(3n)) { border-right: 1px solid var(--line); }

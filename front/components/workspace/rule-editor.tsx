@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { epssProblem, floorLocks, mergeRules, THRESHOLD_LABEL, thresholdText, type AllowRule, type RequireRule } from "@/components/workspace/policy-logic";
 import { Switch } from "@/components/workspace/ui";
@@ -29,6 +30,7 @@ function Locked() {
  * can only add requirements. `value` stays the layer's own rules, so the floor is never copied in.
  */
 export function RuleEditor({ value, onChange, floor, idPrefix, autoFocus = false }: { value: PolicyRules; onChange: (next: PolicyRules) => void; floor?: PolicyRules; idPrefix: string; autoFocus?: boolean }) {
+  const [epssHelpOpen, setEpssHelpOpen] = useState(false);
   const effective = floor ? mergeRules(floor, value) : value;
   const locks = floor ? floorLocks(floor) : null;
   const set = <K extends keyof PolicyRules>(key: K, next: PolicyRules[K]) => onChange({ ...value, [key]: next });
@@ -67,8 +69,14 @@ export function RuleEditor({ value, onChange, floor, idPrefix, autoFocus = false
         })}
         <div className="toggle-row rule-epss">
           <span>
-            <b>EPSS threshold{locks?.epss && <Locked/>}</b>
-            <small>Fail when a vulnerability’s EPSS score, the estimated probability that it is exploited in the next 30 days, reaches this value.</small>
+            <b className="rule-epss-title">EPSS threshold
+              <span className="rule-epss-help" onMouseEnter={() => setEpssHelpOpen(true)} onMouseLeave={(event) => { if (!event.currentTarget.contains(document.activeElement)) setEpssHelpOpen(false); }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setEpssHelpOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" && epssHelpOpen) { event.stopPropagation(); setEpssHelpOpen(false); } }}>
+                <button type="button" className="rule-epss-help-button" aria-label="What is EPSS?" aria-describedby={`${idPrefix}-epss-help`} onFocus={() => setEpssHelpOpen(true)} onClick={() => setEpssHelpOpen(true)}>?</button>
+                <span id={`${idPrefix}-epss-help`} role="tooltip" className="rule-epss-tooltip" hidden={!epssHelpOpen}>EPSS (Exploit Prediction Scoring System) estimates the probability that a vulnerability will be exploited in the next 30 days. Scores range from 0 to 1: 0.1 means a 10% probability.</span>
+              </span>
+              {locks?.epss && <Locked/>}
+            </b>
+            <small>Fail when a vulnerability’s EPSS score reaches or exceeds this value.</small>
             {epss !== null && (
               <span className="rule-epss-field">
                 <label htmlFor={`${idPrefix}-epss`} className="sr-only">EPSS threshold, 0 to 1</label>

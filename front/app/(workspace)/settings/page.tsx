@@ -60,7 +60,15 @@ function CiSection({ onIdentities }: { onIdentities: () => void }) {
   const shell = `curl -fsSL ${url}/ci/client.py -o depradar_ci.py\nDEPRADAR_URL=${url} python3 depradar_ci.py scan --fail-on high`;
   return (
     <>
-      <div className="section-intro"><h2>CI/CD access</h2><p>Give each client pipeline its own token, with only the access it needs. Jobs on the default branch upload the manifests DepRadar keeps monitoring. Pull and merge request jobs only check the change: it passes or fails against your policies, and nothing DepRadar monitors changes. Give pull request jobs a “Pull request checks” token so they cannot change what is monitored.</p></div>
+      <div className="section-intro">
+        <h2>CI/CD access</h2>
+        <p>Give each client’s pipeline its own access token (a secret key), with only the permissions it needs.</p>
+        <details className="token-guide">
+          <summary>Which token should I use?</summary>
+          <p><b>Default-branch pipeline:</b> Use for your default branch (usually main). Jobs upload dependency files so DepRadar can keep checking those dependencies for vulnerabilities.</p>
+          <p><b>Pull request checks:</b> Use for pull and merge requests. Jobs check whether proposed changes pass your security rules. This token cannot change the dependencies DepRadar monitors.</p>
+        </details>
+      </div>
       <div className="callout"><Icon name="lock" size={16}/><span>On GitHub Actions or GitLab CI, you do not need to store a token: with a <button className="link" onClick={onIdentities}>trusted identity</button>, each job signs in with a temporary token (OIDC) issued by GitHub or GitLab, and only the branch and workflow you trust can update monitored manifests.</span></div>
       <Sheet title="Tokens" meta={`${tokens.filter((token) => tokenState(token, now) === "Active").length} active`} actions={<button className="btn btn-primary btn-sm" onClick={() => workspace.setModal({ kind: "token" })}><Icon name="plus" size={14}/>New token</button>}>
         <div className="table-wrap">
