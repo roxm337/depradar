@@ -10,9 +10,21 @@ from depradar.application.errors import Conflict, Forbidden, NotFound
 from depradar.application.findings import latest_scan, record_change
 from depradar.application.housekeeping import purge_project
 from depradar.application.locking import lock_writes
-from depradar.domain.entities import Finding, Inventory, Job, Project, Scan, utcnow
+from depradar.domain.entities import (
+    Finding,
+    Inventory,
+    Job,
+    NotificationPolicy,
+    Project,
+    Scan,
+    utcnow,
+)
 from depradar.domain.gate import LEVELS
+from depradar.domain.monitoring import alert_refusal, effective_threshold, monitoring_refusal
 from depradar.domain.security import Principal
+
+# Where a refused change can still be made, for an assistant to pass on.
+OWNER_ONLY = "The owner can change this in the DepRadar dashboard, under Projects"
 
 
 def get_project(db: Session, project_id: str, principal: Principal | None = None) -> Project:
@@ -70,6 +82,61 @@ def set_alerts(db: Session, project_id: str, enabled: bool, min_severity: str) -
     project.alert_min_severity = None if min_severity == "inherit" else min_severity
     db.commit()
     return project
+
+
+def locked_project(db: Session, project_id: str, principal: Principal) -> Project:
+    """The project row, locked and freshly read, so a check and its change see the same state."""
+    project = db.scalar(
+        select(Project)
+        .where(Project.id == project_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if project is None or not principal.allows(project.id):
+        raise NotFound("Project not found")
+    return project
+
+
+def tighten_monitoring(
+    db: Session, principal: Principal, project_id: str, enabled: bool, interval_hours: int
+) -> Project:
+    """An assistant's change to monitoring, applied only when it keeps or increases coverage."""
+    project = locked_project(db, project_id, principal)
+    reason = monitoring_refusal(
+        project.monitoring_enabled, project.check_interval_hours, enabled, interval_hours
+    )
+    if reason:
+        db.rollback()
+        raise Forbidden(f"{reason}. {OWNER_ONLY}.")
+    return set_monitoring(db, project.id, enabled, interval_hours)
+
+
+def installation_threshold(db: Session) -> str:
+    """The installation's immediate-alert threshold, which projects without their own inherit."""
+    policy = db.get(NotificationPolicy, 1)
+    return policy.immediate_min_severity if policy else "high"
+
+
+def tighten_alerts(
+    db: Session, principal: Principal, project_id: str, enabled: bool, min_severity: str
+) -> Project:
+    """An assistant's change to alerts, applied only when as many findings or more alert.
+
+    Both thresholds are compared after ``inherit`` resolves against the installation policy.
+    """
+    project = locked_project(db, project_id, principal)
+    installation = installation_threshold(db)
+    requested = None if min_severity == "inherit" else min_severity
+    reason = alert_refusal(
+        project.notifications_enabled,
+        effective_threshold(project.alert_min_severity, installation),
+        enabled,
+        effective_threshold(requested, installation),
+    )
+    if reason:
+        db.rollback()
+        raise Forbidden(f"{reason}. {OWNER_ONLY}.")
+    return set_alerts(db, project.id, enabled, min_severity)
 
 
 def list_inventories(

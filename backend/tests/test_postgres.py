@@ -4,11 +4,15 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, func, inspect, select, text
 
-from depradar.application.scans import claim_job
+from depradar.application.scans import claim_job, run_once
+from depradar.application.scheduling import rescan, schedule_projects
+from depradar.domain.entities import ChangeEvent, Finding, Job, OutboxEvent, Project
+from depradar.domain.security import Principal
 
 from .conftest import Harness
+from .test_scans import report
 from .test_uploads import upload
 
 pytestmark = [
@@ -27,6 +31,66 @@ def test_concurrent_workers_claim_distinct_jobs(harness: Harness, project_id: st
         claims = list(pool.map(lambda _: claim_job(harness.factory, harness.settings), range(2)))
     assert all(claim is not None for claim in claims)
     assert claims[0][0] != claims[1][0]
+
+
+def test_rescans_queue_once_and_alert_like_scheduled_scans(harness: Harness) -> None:
+    """Concurrent assistant rescans queue one job, and its result opens findings and alerts
+    exactly as a scheduled recheck of the same manifest does."""
+
+    def project(name: str) -> str:
+        response = harness.client.post(
+            "/api/projects", json={"name": name}, headers=harness.headers
+        )
+        assert response.status_code == 201
+        project_id = str(response.json()["id"])
+        assert upload(harness, project_id).status_code == 202
+        assert run_once(
+            harness.factory, harness.settings, harness.store, lambda *_: report(vulnerable=False)
+        )
+        return project_id
+
+    rescanned, scheduled = project("Rescanned"), project("Scheduled")
+
+    def request(_: int) -> int:
+        with harness.factory() as db:
+            return len(rescan(db, Principal(), rescanned))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(request, range(2))) == [1, 1]
+    with harness.factory.begin() as db:
+        row = db.get(Project, scheduled)
+        assert row is not None
+        row.monitoring_enabled = True
+        row.next_check_at = None
+        # Monitoring is off for the rescanned project, so only the other one is due.
+        assert schedule_projects(db) == 1
+    with harness.factory() as db:
+        assert db.scalar(select(func.count()).select_from(Job).where(Job.status == "queued")) == 2
+    while run_once(harness.factory, harness.settings, harness.store, lambda *_: report()):
+        pass
+
+    def outcome(project_id: str) -> tuple[list[str], list[str], int]:
+        with harness.factory() as db:
+            statuses = list(
+                db.scalars(select(Finding.status).where(Finding.project_id == project_id))
+            )
+            kinds = list(
+                db.scalars(
+                    select(ChangeEvent.kind)
+                    .join(Finding, Finding.id == ChangeEvent.finding_id)
+                    .where(Finding.project_id == project_id)
+                )
+            )
+            alerts = db.scalar(
+                select(func.count())
+                .select_from(OutboxEvent)
+                .join(ChangeEvent, ChangeEvent.id == OutboxEvent.change_id)
+                .join(Finding, Finding.id == ChangeEvent.finding_id)
+                .where(Finding.project_id == project_id)
+            )
+            return statuses, kinds, alerts or 0
+
+    assert outcome(rescanned) == outcome(scheduled) == (["open"], ["opened"], 1)
 
 
 def test_initial_migration_up_and_down(monkeypatch: pytest.MonkeyPatch) -> None:

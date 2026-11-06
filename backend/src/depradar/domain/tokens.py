@@ -8,7 +8,9 @@ from typing import Literal, get_args
 
 # inventories:write uploads monitored and check manifests; inventories:check uploads check
 # manifests only, so a pull request pipeline holding it can never change monitored state.
-# components:read searches where a package is used; only AI assistant (MCP) tokens hold it.
+# components:read searches where a package is used; scans:write rescans stored monitored
+# manifests; monitoring:tighten turns monitoring and alerts on or makes them stricter, never
+# looser. Only AI assistant (MCP) tokens hold these three.
 Scope = Literal[
     "projects:read",
     "projects:write",
@@ -17,17 +19,20 @@ Scope = Literal[
     "scans:read",
     "findings:read",
     "components:read",
+    "scans:write",
+    "monitoring:tighten",
 ]
 SCOPES: tuple[str, ...] = get_args(Scope)
 # A token works on one interface only: "api" for the REST API, "mcp" for AI assistants.
 Audience = Literal["api", "mcp"]
 AUDIENCES: tuple[str, ...] = get_args(Audience)
-# Assistants read, and may run check scans, which never change findings, alerts, or inventories.
+ASSISTANT_ONLY = frozenset({"components:read", "scans:write", "monitoring:tighten"})
+# Assistants read and run check scans, and may be allowed changes that only increase coverage:
+# creating projects, rescanning stored manifests, and tightening monitoring and alerts. They never
+# upload monitored manifests, so they cannot change what a project's findings are based on.
 AUDIENCE_SCOPES: dict[str, frozenset[str]] = {
-    "api": frozenset(SCOPES) - {"components:read"},
-    "mcp": frozenset(
-        {"projects:read", "scans:read", "findings:read", "components:read", "inventories:check"}
-    ),
+    "api": frozenset(SCOPES) - ASSISTANT_ONLY,
+    "mcp": frozenset(SCOPES) - {"inventories:write"},
 }
 PREFIX = "depradar_"
 ALPHABET = string.digits + string.ascii_letters
