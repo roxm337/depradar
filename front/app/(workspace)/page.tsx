@@ -55,10 +55,10 @@ export default function OverviewPage() {
   const lede = !projects.length
     ? "Create a project and upload a lockfile, or connect a pipeline, to start monitoring."
     : open.length
-      ? <><strong>{plural(open.length, "open finding")}</strong> across {affected} of {plural(projects.length, "project")}. {undecided ? `${undecided} still need a decision.` : "Every finding has a decision."}</>
+      ? <><strong>{plural(open.length, "open finding")}</strong> across {affected} of {plural(projects.length, "project")}. {undecided ? `${undecided} not reviewed yet.` : "Every finding has been reviewed."}</>
       : <>{coverage === "verified" ? "No open findings" : "No known open findings"} across {plural(projects.length, "project")}.</>;
   const services = [
-    { label: "Worker", ok: health?.worker === "healthy", state: health ? (health.worker === "healthy" ? "Running" : "Not reporting") : "—" },
+    { label: "Background worker", ok: health?.worker === "healthy", state: health ? (health.worker === "healthy" ? "Running" : "Not reporting") : "—" },
     { label: "OSV scanner", ok: health?.scanner === "healthy", state: health ? (health.scanner === "healthy" ? "Ready" : health.scanner === "unavailable" ? "Unavailable" : "Not reporting") : "—" },
   ];
 
@@ -71,8 +71,8 @@ export default function OverviewPage() {
           <Icon name="info" size={15}/>
           <span>
             {coverage === "pending" ? "Some scans are still running, so these counts will change when they finish. "
-              : coverage === "unknown" ? "Manifest coverage could not be determined from this API version, so these counts may be incomplete. "
-              : `${plural(needsReview, "project")} ${needsReview === 1 ? "has" : "have"} a failed, partial, or missing scan, so these counts cover only what has been scanned. `}
+              : coverage === "unknown" ? "Your DepRadar server runs an older version that cannot report which manifests were scanned, so these counts may be incomplete. "
+              : `${plural(needsReview, "project")} ${needsReview === 1 ? "has" : "have"} a manifest whose scan failed, did not check every package, or has not run yet, so these counts cover only what was scanned. `}
             <Link href="/projects">Review projects</Link>
           </span>
         </div>
@@ -92,10 +92,10 @@ export default function OverviewPage() {
         <div className="kpi">
           <span className="kpi-label">Known exploited</span>
           {loaded ? <span className={`kpi-value ${kev ? "is-hot" : ""}`}>{kev}</span> : <span className="skeleton"/>}
-          <span className="kpi-note">Listed in the CISA catalog</span>
+          <span className="kpi-note">Actively used by attackers (CISA KEV)</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Awaiting a decision</span>
+          <span className="kpi-label">Not reviewed</span>
           {loaded ? <span className="kpi-value">{undecided}</span> : <span className="skeleton"/>}
           <span className="kpi-note">{loaded && `of ${open.length} open`}</span>
         </div>
@@ -113,10 +113,10 @@ export default function OverviewPage() {
           <Sheet title="Open findings over time" meta="By severity" actions={<Segmented label="Time range" value={windowDays} onChange={setWindowDays} options={[...WINDOWS]}/>}>
             {loaded ? <TrendChart series={series}/> : <div className="chart-empty"><span className="spinner"/></div>}
           </Sheet>
-          <Sheet title="Age of open findings" actions={overdue > 0 ? <span className="tag tag-kev" title={`Past common remediation targets: critical ${TARGET_DAYS.critical} days, high ${TARGET_DAYS.high}, medium ${TARGET_DAYS.medium}. Accepted risks are excluded.`}>{overdue} past target</span> : undefined}>
+          <Sheet title="Age of open findings" actions={overdue > 0 ? <span className="tag tag-kev" title={`Open longer than common fix deadlines: critical ${TARGET_DAYS.critical} days, high ${TARGET_DAYS.high}, medium ${TARGET_DAYS.medium}. Accepted risks are excluded.`}>{overdue} past target</span> : undefined}>
             {loaded ? <AgeBars buckets={buckets}/> : <div className="age-bars"><span className="skeleton"/><span className="skeleton"/><span className="skeleton"/></div>}
             <div className="age-foot">
-              <span>Targets: critical <strong>{TARGET_DAYS.critical} days</strong>, high <strong>{TARGET_DAYS.high}</strong>, medium <strong>{TARGET_DAYS.medium}</strong>. Accepted risks are not counted.</span>
+              <span>Fix deadlines: critical <strong>{TARGET_DAYS.critical} days</strong>, high <strong>{TARGET_DAYS.high}</strong>, medium <strong>{TARGET_DAYS.medium}</strong>. Accepted risks are not counted.</span>
             </div>
           </Sheet>
         </div>
@@ -138,7 +138,7 @@ export default function OverviewPage() {
                   ))}
                 </tbody>
               </table>
-              {loaded && !open.length && <Empty icon="check-circle" title={coverage === "verified" ? "Nothing needs attention" : "No known open findings"} text={coverage === "verified" ? "Every monitored manifest is clear as of its latest complete scan. DepRadar keeps rechecking as advisories are published." : "Some manifests are not confirmed clear yet. Open Projects to see which scans need attention."}/>}
+              {loaded && !open.length && <Empty icon="check-circle" title={coverage === "verified" ? "Nothing needs attention" : "No known open findings"} text={coverage === "verified" ? "The latest complete scan of every monitored manifest found no known vulnerabilities. DepRadar keeps scanning as new advisories are published." : "Some manifests are not confirmed clear yet. Open Projects to see which scans need attention."}/>}
             </div>
           </Sheet>
           <Sheet className="is-fill" title="Projects by risk" actions={<Link className="btn btn-ghost btn-sm" href="/projects">All projects<Icon name="arrow" size={14}/></Link>}>
@@ -157,7 +157,7 @@ export default function OverviewPage() {
         </div>
 
         <div className="overview-grid is-even">
-          <Sheet title="Recent activity" meta="Scans, deliveries, and access changes">
+          <Sheet title="Recent activity" meta="Scans, alerts, and token changes">
             <div className="sheet-body">
               {activity.length ? <div className="timeline">{activity.map((item) => <div className="timeline-item" key={item.id}><span className={`dot ${item.tone}`}/><div><b>{item.title}</b><p>{item.detail}</p></div><time>{relativeTime(now, item.at)}</time></div>)}</div> : <p className="muted">Activity appears after the first upload, scan, or alert.</p>}
             </div>
@@ -167,9 +167,9 @@ export default function OverviewPage() {
               {services.map((service) => <div className="health-line" key={service.label}><span className={`dot ${service.ok ? "dot-ok" : "dot-warn"}`}/><span>{service.label}</span><b className={service.ok ? "" : "is-warn"}>{service.state}</b></div>)}
               <div className="health-line"><span className="dot"/><span>Scan queue</span><b>{health ? `${health.queued_jobs} queued · ${health.running_jobs} running` : "—"}</b></div>
               <div className="health-line"><span className={`dot ${health?.failed_deliveries ? "dot-bad" : ""}`}/><span>Alert queue</span><b className={health?.failed_deliveries ? "is-warn" : ""}>{health ? `${health.queued_deliveries} queued · ${health.failed_deliveries} failed` : "—"}</b></div>
-              <div className="health-line"><span className="dot"/><span>Scheduled checks due</span><b>{health ? health.due_projects : "—"}</b></div>
-              <div className="health-line"><span className="dot"/><span>CI checks, last 7 days</span><b>{checks}</b></div>
-              <div className="health-line"><span className="dot"/><span>Threat data refreshed</span><b>{health?.intelligence_updated_at ? relativeTime(now, health.intelligence_updated_at) : "Not yet"}</b></div>
+              <div className="health-line"><span className="dot"/><span>Projects due for a scheduled scan</span><b>{health ? health.due_projects : "—"}</b></div>
+              <div className="health-line"><span className="dot"/><span>Pull request checks, last 7 days</span><b>{checks}</b></div>
+              <div className="health-line"><span className="dot"/><span>KEV and EPSS data refreshed</span><b>{health?.intelligence_updated_at ? relativeTime(now, health.intelligence_updated_at) : "Not yet"}</b></div>
             </div>
           </Sheet>
         </div>

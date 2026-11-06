@@ -64,13 +64,13 @@ export default function DecisionsPage() {
 
   return (
     <>
-      <PageHead title="Decisions" lede="Every pipeline gate decision, with the policy, evidence, and exceptions it used. Records never change, and their reports download exactly what the pipeline saw."/>
-      {!features.decisions && <div className="callout decisions-note"><Icon name="warning" size={16}/><span>This API build does not record gate decisions yet. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span>, then pipelines record a decision on every run.</span></div>}
+      <PageHead title="Decisions" lede="Each time a pipeline checks a change, DepRadar records whether it passed and why: the rules applied, the manifests scanned, and any findings you acknowledged or accepted. Records cannot be edited, and downloaded reports show exactly what the pipeline saw."/>
+      {!features.decisions && <div className="callout decisions-note"><Icon name="warning" size={16}/><span>Your DepRadar server runs an older version that does not record gate decisions. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span>, then pipelines record a decision on every run.</span></div>}
       <div className="stat-row decisions-stats" aria-label="Last 7 days">
         <div className="stat"><span>Decisions · 7 days</span><strong>{ready ? recent.length : "—"}</strong></div>
         <div className="stat"><span>Passed</span><strong>{ready ? (recent.length ? `${Math.round((recentPassed / recent.length) * 100)}%` : "—") : "—"}</strong></div>
         <div className="stat"><span>Failed or errored</span><strong className={recentBlocked ? "is-hot" : ""}>{ready ? recentBlocked : "—"}</strong></div>
-        <div className="stat"><span>Central policy enforced</span><strong>{ready ? recentEnforced : "—"}</strong><small className="muted">{ready && recent.length ? `${recentVerified} of ${recent.length} from verified runs` : ""}</small></div>
+        <div className="stat"><span>Made stricter by your policies</span><strong>{ready ? recentEnforced : "—"}</strong><small className="muted">{ready && recent.length ? `${recentVerified} of ${recent.length} from verified runs` : ""}</small></div>
       </div>
       <div className="toolbar">
         <label className="search-field">
@@ -95,7 +95,7 @@ export default function DecisionsPage() {
                   <td><span className="status decision-status"><i className={`dot ${STATUS_TONE[row.status]}`}/>{STATUS_LABEL[row.status]}</span></td>
                   <td><div className="cell-main"><span className="decision-project"><b>{row.project_name}</b><span className={`tag ${row.mode === "check" ? "tag-check" : ""}`}>{MODE_LABEL[row.mode]}</span></span><small className="mono" title={row.commit ?? row.revision ?? undefined}>{revisionLabel(row)}</small></div></td>
                   <td className="col-optional"><div className="cell-main decision-actor"><span>{actorLabel(row.actor)}</span>{row.actor.verified ? <small className="decision-verified"><Icon name="shield" size={12}/>Verified</small> : <small>{row.actor.kind === "owner" ? "Dashboard" : "API token"}</small>}</div></td>
-                  <td className="col-optional"><div className="cell-main"><span className="nowrap">{policyLabel(row.policy_sources)}</span>{row.adjustments > 0 ? <small><span className="tag tag-info decision-enforced">{row.adjustments} {row.adjustments === 1 ? "rule" : "rules"} enforced</span></small> : <small>As requested</small>}</div></td>
+                  <td className="col-optional"><div className="cell-main"><span className="nowrap">{policyLabel(row.policy_sources)}</span>{row.adjustments > 0 ? <small><span className="tag tag-info decision-enforced">{row.adjustments} {row.adjustments === 1 ? "rule" : "rules"} made stricter</span></small> : <small>Pipeline settings unchanged</small>}</div></td>
                   <td><div className="cell-main"><span className={row.violations || row.missing_manifests ? "decision-outcome is-hot" : "decision-outcome"}>{outcomeText(row)}</span>{row.ignored > 0 && <small>{row.ignored} ignored</small>}</div></td>
                   <td className="col-optional muted nowrap"><time dateTime={row.created_at} title={dateTime(row.created_at)}>{relativeTime(now, row.created_at)}</time></td>
                   <td className="right col-optional"><Icon name="chevron" size={16}/></td>
@@ -105,7 +105,7 @@ export default function DecisionsPage() {
           </table>
           {ready && !visible.length && (rows.length
             ? <Empty title="No decisions match" text="Change the status, project, or search to widen the list." action={<button className="btn btn-secondary" onClick={() => update(() => { setStatus("all"); setProject("all"); setQuery(""); })}>Clear filters</button>}/>
-            : <Empty icon="check-circle" title="No gate decisions yet" text="The CI client records a decision each time it gates a change (POST /api/ci/decisions), with the enforced policy, scanner evidence, and exceptions. Connect a pipeline and its first run appears here." action={<Link className="btn btn-primary" href="/settings#ci"><Icon name="branch" size={15}/>Set up CI/CD access</Link>}/>)}
+            : <Empty icon="check-circle" title="No gate decisions yet" text="Each time a connected pipeline checks a change, the result appears here with the rules applied, the scan results, and any exceptions. Connect a pipeline to see its first run." action={<Link className="btn btn-primary" href="/settings#ci"><Icon name="branch" size={15}/>Set up CI/CD access</Link>}/>)}
         </div>
         {ready && visible.length > 0 && <Pagination total={visible.length} page={page} pageSize={pageSize} sizes={PAGE_SIZES} noun="decisions" onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1); }}/>}
         {ready && mayHaveMore && <div className="sheet-foot decisions-older"><span>Showing the newest {rows.length} decisions.</span><button className="btn btn-secondary btn-sm" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder && <span className="spinner"/>}Load older decisions</button></div>}

@@ -51,7 +51,7 @@ export default function LoginPage() {
       if (!(failure instanceof ApiError)) { setStage("offline"); return; }
       if (failure.status === 401) setError("That password is not correct.");
       else if (failure.status === 429) setError("Too many attempts. Wait 15 minutes, then try again.");
-      else if (failure.status === 403) setError("The API rejected this site’s origin. Start the web app with DEPRADAR_ALLOWED_ORIGIN set to the API’s allowed origin.");
+      else if (failure.status === 403) setError("The DepRadar API refused this web app’s requests. Start the web app with DEPRADAR_ALLOWED_ORIGIN set to the same value as the API’s DEPRADAR_ALLOWED_ORIGIN.");
       else if (failure.status === 503) { setOfflineDetail(failure.message); setStage("offline"); }
       else setError(failure.message);
     }
@@ -85,7 +85,7 @@ export default function LoginPage() {
             </label>
             <button className="btn btn-primary auth-submit" type="submit" disabled={busy}>{busy ? <><span className="spinner"/>Signing in…</> : <>Sign in<Icon name="arrow" size={16}/></>}</button>
           </form>
-          <p className="auth-help"><Icon name="shield" size={14}/><span>Forgot it? On the server, run <code>docker compose exec api depradar reset-password</code>. Every session is signed out.</span></p>
+          <p className="auth-help"><Icon name="shield" size={14}/><span>Forgot it? On the server, run <code>docker compose exec api depradar reset-password</code>. This signs out every session.</span></p>
         </>
       )}
     </AuthShell>

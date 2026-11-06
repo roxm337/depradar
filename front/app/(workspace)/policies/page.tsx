@@ -24,16 +24,16 @@ export default function PoliciesPage() {
 
   return (
     <>
-      <PageHead title="Policies" lede="Owner-defined minimums for every gate decision. Pipelines can tighten these rules but never relax them, and each save creates a version that decisions record."/>
+      <PageHead title="Policies" lede="The security rules a pipeline run must meet to pass its DepRadar check (the gate). Pipelines can make these rules stricter, never looser. Each save creates a numbered version, and every gate decision records the version it used."/>
       <div className="policy-page">
-      {!features.policies && <div className="callout"><Icon name="warning" size={16}/><span>This API build does not enforce central policies yet, so pipelines still decide their own gate. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span> to enable them.</span></div>}
+      {!features.policies && <div className="callout"><Icon name="warning" size={16}/><span>Your DepRadar server runs an older version that does not enforce these policies, so each pipeline still uses only its own settings. Rebuild with <span className="inline-code">docker compose up --build -d api worker</span> to enable them.</span></div>}
       <PolicyFlow installation={installation} version={policies.installation.version} overrides={overrides.length}/>
-      {ready ? <InstallationEditor key={`${policies.installation.id ?? "default"}-${policies.installation.version}`} policy={policies.installation} disabled={!features.policies}/> : <Sheet title="Installation minimum"><div className="sheet-body"><span className="skeleton" style={{ width: "40%" }}/></div></Sheet>}
-      <Sheet title="Project policies" meta={overrides.length ? `${overrides.length} ${overrides.length === 1 ? "project adds" : "projects add"} stricter rules` : "Every project follows the installation minimum"}
+      {ready ? <InstallationEditor key={`${policies.installation.id ?? "default"}-${policies.installation.version}`} policy={policies.installation} disabled={!features.policies}/> : <Sheet title="Global policy"><div className="sheet-body"><span className="skeleton" style={{ width: "40%" }}/></div></Sheet>}
+      <Sheet title="Project policies" meta={overrides.length ? `${overrides.length} ${overrides.length === 1 ? "project adds" : "projects add"} stricter rules` : "Every project follows the global policy"}
         actions={<button className="btn btn-secondary btn-sm" disabled={!features.policies || !free.length} onClick={() => setEditing({ project: null, rules: DEFAULT_RULES })}><Icon name="plus" size={14}/>Add project policy</button>}>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Project</th><th>Adds</th><th className="col-optional">Effective minimum</th><th className="col-optional">Version</th><th className="col-optional">Updated</th><th aria-label="Actions"/></tr></thead>
+            <thead><tr><th>Project</th><th>Adds</th><th className="col-optional">Rules applied</th><th className="col-optional">Version</th><th className="col-optional">Updated</th><th aria-label="Actions"/></tr></thead>
             <tbody>
               {!ready ? <SkeletonRows rows={2} columns={6}/> : overrides.map((row) => {
                 const project = names.get(row.project_id);
@@ -54,7 +54,7 @@ export default function PoliciesPage() {
               })}
             </tbody>
           </table>
-          {ready && !overrides.length && <Empty icon="lock" title="No project policies" text="Add one to require more from a specific client than the installation does, such as complete coverage for a regulated application." action={projects.length ? <button className="btn btn-secondary" disabled={!features.policies} onClick={() => setEditing({ project: null, rules: DEFAULT_RULES })}><Icon name="plus" size={15}/>Add project policy</button> : undefined}/>}
+          {ready && !overrides.length && <Empty icon="lock" title="No project policies" text="Add one when a client needs stricter rules than the global policy, such as complete coverage for a regulated application." action={projects.length ? <button className="btn btn-secondary" disabled={!features.policies} onClick={() => setEditing({ project: null, rules: DEFAULT_RULES })}><Icon name="plus" size={15}/>Add project policy</button> : undefined}/>}
         </div>
       </Sheet>
       </div>
@@ -64,16 +64,16 @@ export default function PoliciesPage() {
   );
 }
 
-/** Pipeline request → installation → project → effective: how the gate is assembled. */
+/** Pipeline settings → global → project → applied: how the gate is assembled. */
 function PolicyFlow({ installation, version, overrides }: { installation: PolicyRules; version: number; overrides: number }) {
   const steps = [
-    { icon: "branch", title: "Pipeline request", text: "Flags such as --fail-on in each job" },
-    { icon: "shield", title: "Installation minimum", text: isPermissive(installation) ? "No requirements yet" : summarizeRules(installation), meta: version ? `v${version}` : "default" },
-    { icon: "box", title: "Project minimum", text: overrides ? `${overrides} ${overrides === 1 ? "project adds" : "projects add"} rules` : "None yet" },
-    { icon: "check-circle", title: "Effective gate", text: "The strictest value of each rule" },
+    { icon: "branch", title: "Pipeline settings", text: "Options such as --fail-on in each job" },
+    { icon: "shield", title: "Global policy", text: isPermissive(installation) ? "No requirements yet" : summarizeRules(installation), meta: version ? `v${version}` : "default" },
+    { icon: "box", title: "Project policies", text: overrides ? `${overrides} ${overrides === 1 ? "project adds" : "projects add"} rules` : "None yet" },
+    { icon: "check-circle", title: "Rules applied", text: "The strictest setting of each rule wins" },
   ];
   return (
-    <ol className="policy-flow" aria-label="How the effective gate is built">
+    <ol className="policy-flow" aria-label="How the rules applied to a pipeline run are built">
       {steps.map((step, index) => (
         <li key={step.title} className={index === steps.length - 1 ? "is-result" : ""}>
           <span className="policy-flow-icon" aria-hidden="true"><Icon name={step.icon} size={15}/></span>
@@ -102,16 +102,16 @@ function InstallationEditor({ policy, disabled }: { policy: PolicyVersion; disab
     setBusy(false);
   }
   return (
-    <Sheet title="Installation minimum" meta={policy.version ? <>Version {policy.version} · saved <time dateTime={policy.created_at ?? undefined} title={dateTime(policy.created_at)}>{relativeTime(now, policy.created_at)}</time></> : "Never saved · no central requirements"}
+    <Sheet title="Global policy" meta={policy.version ? <>Version {policy.version} · saved <time dateTime={policy.created_at ?? undefined} title={dateTime(policy.created_at)}>{relativeTime(now, policy.created_at)}</time></> : "Never saved · applies to every project"}
       actions={<button className="btn btn-ghost btn-sm" aria-expanded={history} onClick={() => setHistory(!history)} disabled={!policy.version}><Icon name="clock" size={14}/>{history ? "Hide history" : "History"}</button>}>
       <form className="sheet-body policy-form" onSubmit={submit}>
         <fieldset disabled={disabled || busy} className="policy-fieldset">
-          <legend className="sr-only">Installation rules</legend>
+          <legend className="sr-only">Global policy rules</legend>
           <RuleEditor idPrefix="installation" value={draft} onChange={setDraft}/>
           <label className="field"><span className="field-label">Change note <span>Optional, shown in the version history</span></span><input className="input" maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Why this change? For example: client contract requires KEV blocking"/></label>
         </fieldset>
         <div className="policy-foot">
-          <span className="field-hint" aria-live="polite">{dirty ? <>Pending: {summarizeRules(draft)}</> : <>Current: {summarizeRules(saved)}</>}</span>
+          <span className="field-hint" aria-live="polite">{dirty ? <>Not saved yet: {summarizeRules(draft)}</> : <>Current: {summarizeRules(saved)}</>}</span>
           {dirty && <button type="button" className="btn btn-ghost" onClick={() => { setDraft(saved); setNote(""); }}>Discard</button>}
           <button className="btn btn-primary" disabled={disabled || busy || !dirty || Boolean(problem)}>{busy && <span className="spinner"/>}Save as version {policy.version + 1}</button>
         </div>
@@ -172,13 +172,13 @@ function ProjectPolicyDialog({ initial, available, installation, onClose }: { in
     setBusy(false);
   }
   return (
-    <Dialog title={initial.project ? `Policy for ${initial.project.name}` : "Add a project policy"} description="A project policy adds requirements on top of the installation minimum. Rules the installation already enforces are locked." onClose={onClose}>
+    <Dialog title={initial.project ? `Policy for ${initial.project.name}` : "Add a project policy"} description="A project policy adds stricter rules on top of the global policy. Rules the global policy already sets are locked." onClose={onClose}>
       <form onSubmit={submit}>
         <div className="modal-body dialog-scroll">
           {!initial.project && <label className="field"><span className="field-label">Project</span><select className="select" required value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="" disabled>Choose a project</option>{available.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}
           <RuleEditor idPrefix="project" value={draft} onChange={setDraft} floor={installation} autoFocus={Boolean(initial.project)}/>
           <label className="field"><span className="field-label">Change note <span>Optional</span></span><input className="input" maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="For example: regulated client, every manifest must be scanned"/></label>
-          <div className={`callout ${adds ? "" : "is-quiet"}`} aria-live="polite"><Icon name="check-circle" size={16}/><span>{adds ? <>Pipelines of {project?.name ?? "this project"} will get at least: <b>{summarizeRules(effective)}</b>.</> : "Nothing here is stricter than the installation minimum yet. Turn on a rule or choose a lower severity to add one."}</span></div>
+          <div className={`callout ${adds ? "" : "is-quiet"}`} aria-live="polite"><Icon name="check-circle" size={16}/><span>{adds ? <>Pipelines of {project?.name ?? "this project"} will have to meet at least: <b>{summarizeRules(effective)}</b>.</> : "Nothing here is stricter than the global policy yet. Turn on a rule or choose a lower severity to add one."}</span></div>
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !project || Boolean(problem) || !adds || unchanged}>{busy && <span className="spinner"/>}{initial.project ? "Save new version" : "Add policy"}</button></div>
       </form>
@@ -192,8 +192,8 @@ function RemoveDialog({ row, project, installation, onClose }: { row: ProjectPol
   if (!project) return null;
   return (
     <ConfirmDialog title={`Remove the policy for ${project.name}?`} confirmLabel="Remove policy" busy={busy} onClose={onClose} onConfirm={async () => { setBusy(true); if (await actions.saveProjectPolicy(project, null, "Removed project policy")) onClose(); setBusy(false); }}>
-      <p>Its pipelines will follow the installation minimum: <b>{summarizeRules(installation)}</b>.</p>
-      <p className="muted">The removal is recorded as version {row.policy.version + 1}. Earlier decisions keep the version they were made under.</p>
+      <p>Its pipelines will follow the global policy: <b>{summarizeRules(installation)}</b>.</p>
+      <p className="muted">The removal is saved as version {row.policy.version + 1}. Past gate decisions still show the version they used.</p>
     </ConfirmDialog>
   );
 }

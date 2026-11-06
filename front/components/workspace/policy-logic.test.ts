@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { DecisionActor, DecisionSummary, PolicyRules } from "../../lib/api.ts";
-import { actorLabel, DEFAULT_RULES, describeChanges, epssProblem, eventLabel, floorLocks, intelligenceAge, isPermissive, matchesDecision, mergeRules, normalizeRef, normalizeRules, outcomeText, policyLabel, refLabel, reportFile, repositoryProblem, revisionLabel, rulesEqual, statusCounts, stricterEpss, stricterThreshold, summarizeGate, summarizeRules, thresholdStrictness } from "./policy-logic.ts";
+import { actorLabel, DEFAULT_RULES, describeChanges, epssProblem, eventLabel, floorLocks, intelligenceAge, isPermissive, matchesDecision, mergeRules, normalizeRef, normalizeRules, outcomeText, policyLabel, refLabel, reportFile, repositoryProblem, revisionLabel, rulesEqual, sourceLabel, statusCounts, stricterEpss, stricterThreshold, summarizeGate, summarizeRules, thresholdStrictness } from "./policy-logic.ts";
 
 const rules = (patch: Partial<PolicyRules>): PolicyRules => ({ ...DEFAULT_RULES, ...patch });
 const actor = (patch: Partial<DecisionActor>): DecisionActor => ({ kind: "token", name: "acme CI", token_id: "t1", verified: false, provider: null, repository: null, workflow: null, ref: null, event: null, run_id: null, run_url: null, ...patch });
@@ -103,24 +103,24 @@ describe("epssProblem", () => {
 
 describe("summaries", () => {
   test("reads a rule set in one line", () => {
-    assert.equal(summarizeRules(rules({ fail_on: "high", fail_on_kev: true, fail_on_incomplete: true })), "High and above · KEV · complete coverage");
-    assert.equal(summarizeRules(DEFAULT_RULES), "No central requirements");
+    assert.equal(summarizeRules(rules({ fail_on: "high", fail_on_kev: true, fail_on_incomplete: true })), "High and above · known exploited · complete coverage");
+    assert.equal(summarizeRules(DEFAULT_RULES), "No requirements");
     assert.equal(summarizeRules(rules({ fail_on: "critical" })), "Critical only");
-    assert.equal(summarizeRules(rules({ fail_on_kev: true, epss_threshold: 0.1 })), "KEV · EPSS ≥ 0.1");
+    assert.equal(summarizeRules(rules({ fail_on_kev: true, epss_threshold: 0.1 })), "Known exploited · EPSS ≥ 0.1");
     // Unknown severity fails on its own, with or without a severity threshold.
     assert.equal(summarizeRules(rules({ fail_on_unknown: true })), "Unknown severity");
-    assert.equal(summarizeRules(rules({ allow_new_only: false, require_monitored_manifests: true })), "Every manifest · no new-only");
+    assert.equal(summarizeRules(rules({ allow_new_only: false, require_monitored_manifests: true })), "Every monitored manifest · new-only not allowed");
   });
 
   test("describes the gate a decision enforced", () => {
     const gate = { fail_on: "medium", fail_on_unknown: false, fail_on_kev: true, epss_threshold: null, new_only: true, ignore_acknowledged: false, fail_on_incomplete: false, require_monitored_manifests: false } as const;
-    assert.equal(summarizeGate(gate), "Medium and above · KEV · new findings only");
+    assert.equal(summarizeGate(gate), "Medium and above · known exploited · new findings only");
   });
 
   test("describes what changed between versions", () => {
     assert.deepEqual(describeChanges(rules({ fail_on: "critical" }), rules({ fail_on: "high", fail_on_kev: true })), ["Minimum severity: critical → high", "Known exploited (KEV): off → on"]);
     assert.deepEqual(describeChanges(null, rules({ allow_new_only: false })), ["New-only gating: allowed → not allowed"]);
-    assert.deepEqual(describeChanges(rules({ epss_threshold: 0.2 }), null), ["Override removed; the installation policy applies"]);
+    assert.deepEqual(describeChanges(rules({ epss_threshold: 0.2 }), null), ["Project policy removed; the global policy applies"]);
     assert.deepEqual(describeChanges(rules({}), rules({})), ["No rule changes"]);
     assert.deepEqual(describeChanges(null, DEFAULT_RULES), ["Saved with no requirements"]);
   });
@@ -149,9 +149,14 @@ describe("decision formatting", () => {
     assert.equal(eventLabel("deployment_status"), "Deployment status");
   });
 
+  test("names the stored installation scope as the global policy", () => {
+    assert.equal(sourceLabel("installation policy v3"), "global policy v3");
+    assert.equal(sourceLabel("project policy v1"), "project policy v1");
+  });
+
   test("names policy versions, installation first", () => {
-    assert.equal(policyLabel([{ scope: "project", project_id: "p1", version: 1, policy_id: "b" }, { scope: "installation", project_id: null, version: 3, policy_id: "a" }]), "Installation v3 · Project v1");
-    assert.equal(policyLabel([{ scope: "installation", project_id: null, version: 0, policy_id: null }]), "Installation default");
+    assert.equal(policyLabel([{ scope: "project", project_id: "p1", version: 1, policy_id: "b" }, { scope: "installation", project_id: null, version: 3, policy_id: "a" }]), "Global v3 · Project v1");
+    assert.equal(policyLabel([{ scope: "installation", project_id: null, version: 0, policy_id: null }]), "Global default");
     assert.equal(policyLabel([]), "Pipeline only");
   });
 
@@ -172,7 +177,7 @@ describe("decision formatting", () => {
     assert.equal(outcomeText(decision({ status: "fail", violations: 3, missing_manifests: 1, ignored: 2 })), "3 violations · 1 manifest missing");
     assert.equal(outcomeText(decision({ status: "fail", missing_manifests: 2 })), "2 manifests missing");
     assert.equal(outcomeText(decision({})), "No violations");
-    assert.equal(outcomeText(decision({ status: "error" })), "Could not evaluate");
+    assert.equal(outcomeText(decision({ status: "error" })), "Could not be checked");
   });
 
   test("states how old the threat intelligence was at decision time", () => {

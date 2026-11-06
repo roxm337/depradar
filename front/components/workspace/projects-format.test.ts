@@ -28,7 +28,7 @@ describe("scanDuration", () => {
 describe("coverageBadge", () => {
   test("maps each coverage state to a label and tone", () => {
     assert.deepEqual(coverageBadge("verified"), { label: "Verified", tone: "tag-ok" });
-    assert.deepEqual(coverageBadge("incomplete"), { label: "Partial", tone: "tag-warn" });
+    assert.deepEqual(coverageBadge("incomplete"), { label: "Incomplete", tone: "tag-warn" });
     assert.equal(coverageBadge("unscanned").label, "Not scanned");
     assert.equal(coverageBadge("pending").label, "In progress");
     assert.equal(coverageBadge("none").label, "No manifests");
