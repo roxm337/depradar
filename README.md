@@ -219,9 +219,10 @@ versions, and the exceptions that applied. See [CI/CD integration](docs/CI_CD.md
 Claude Code, Cursor, VS Code, and other MCP clients can ask DepRadar what is most urgent, why a
 gate failed, or whether a lockfile is safe. Turn the endpoint on with `DEPRADAR_MCP_ENABLED=true`,
 create a token in Settings → **AI assistants**, and connect to `/api/mcp`. Assistant tokens work
-only on the MCP endpoint, can be restricted to one client project, and can read and run check
-scans but never change findings, alerts, or monitored state. Every call is audited. See
-[AI assistants](docs/MCP.md).
+only on the MCP endpoint and can be restricted to one client project. They read and run check
+scans. If you allow it, they can also create projects, rescan stored manifests, and turn
+monitoring and alerts on or make them stricter, but never relax them or change findings. Every
+call is audited. See [AI assistants](docs/MCP.md).
 
 ## Notifications, monitoring, and finding decisions
 
