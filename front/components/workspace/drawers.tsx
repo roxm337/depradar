@@ -133,7 +133,7 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
         {!open && <span className="foot-meta">{resolvedByRetirement ? `Resolved when its manifest was retired on ${shortDate(finding.resolved_at)}.` : `Resolved by a complete scan on ${shortDate(finding.resolved_at)}.`}</span>}
         {open && finding.workflow_status === "open" && <button className="btn btn-primary" onClick={() => void actions.acknowledge(finding)}><Icon name="check" size={16}/>Acknowledge</button>}
         {open && finding.workflow_status !== "open" && <button className="btn btn-secondary" onClick={() => void actions.clearDecision(finding)}>{finding.workflow_status === "risk_accepted" ? "Revoke risk acceptance" : "Reopen for review"}</button>}
-        {open && finding.workflow_status !== "risk_accepted" && <button className="btn btn-ghost" onClick={() => workspace.setModal({ kind: "risk", findingId: finding.id })}>Accept risk temporarily…</button>}
+        {open && finding.workflow_status !== "risk_accepted" && <button className="btn btn-ghost" onClick={() => workspace.setModal({ kind: "risk", findingId: finding.id })}>Accept risk temporarily</button>}
       </div>
     </Drawer>
   );
