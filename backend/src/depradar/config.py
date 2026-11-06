@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     kev_feed_url: str = (
         "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     )
+    # AI assistants (MCP) at /api/mcp: off until the owner enables it.
+    mcp_enabled: bool = False
+    # Browser origins allowed to call /api/mcp besides allowed_origin; assistants that connect
+    # from a server or the command line send no Origin header.
+    mcp_allowed_origins: list[str] = []
+    mcp_rate_limit_per_minute: int = Field(default=120, ge=1, le=10000)
 
 
 @lru_cache

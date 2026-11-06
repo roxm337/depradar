@@ -220,6 +220,7 @@ class SystemState(Base):
     last_housekeeping_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     scan_retention_days: Mapped[int] = mapped_column(default=30)
     delivery_retention_days: Mapped[int] = mapped_column(default=30)
+    audit_retention_days: Mapped[int] = mapped_column(default=90)
     last_worker_heartbeat_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     last_scanner_check_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     scanner_available: Mapped[bool | None] = mapped_column()
@@ -349,6 +350,8 @@ class ApiToken(Base):
     kind: Mapped[str] = mapped_column(String(20), default="static")
     identity_id: Mapped[str | None] = mapped_column(ForeignKey("trusted_identity.id"), index=True)
     claims: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # "api" tokens work on the REST API only; "mcp" tokens work on the MCP endpoint only.
+    audience: Mapped[str] = mapped_column(String(10), default="api")
 
 
 class SecurityPolicy(Base):
@@ -388,3 +391,27 @@ class GateDecision(Base):
     exceptions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     intelligence_updated_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     result: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+
+class AuditEvent(Base):
+    """One call an AI assistant made through the MCP endpoint, for the owner to review.
+
+    Rows record what was called and its outcome, never arguments or results. They are
+    append-only and reference nothing, so writing them needs no write barrier, and they outlive
+    the token or project they mention.
+    """
+
+    __tablename__ = "audit_event"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow, index=True)
+    token_id: Mapped[str | None] = mapped_column(String(36))
+    token_name: Mapped[str] = mapped_column(String(100), default="")
+    # Self-reported by the assistant, so shown as a hint only.
+    client_name: Mapped[str] = mapped_column(String(100), default="")
+    kind: Mapped[str] = mapped_column(String(20))
+    name: Mapped[str] = mapped_column(String(100))
+    project_id: Mapped[str | None] = mapped_column(String(36))
+    # "ok", "error" (the call failed), or "denied" (the token lacked access).
+    outcome: Mapped[str] = mapped_column(String(10))
+    detail: Mapped[str] = mapped_column(String(300), default="")
+    duration_ms: Mapped[int] = mapped_column(default=0)

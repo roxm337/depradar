@@ -212,7 +212,15 @@ def test_retention_keeps_each_monorepo_manifest_and_prunes_old_checks(
         assert db.scalar(select(Scan).where(Scan.inventory_id == check_id)) is None
 
 
+def as_revision_0007(database: dict, manifest: dict) -> None:
+    del database["audit_event"], manifest["row_counts"]["audit_event"]
+    for row in database["system_state"]:
+        del row["audit_retention_days"]
+    manifest["revision"] = "0007"
+
+
 def as_revision_0006(database: dict, manifest: dict) -> None:
+    as_revision_0007(database, manifest)
     del database["component_occurrence"], manifest["row_counts"]["component_occurrence"]
     manifest["revision"] = "0006"
 
@@ -242,7 +250,8 @@ def as_revision_0003(database: dict, manifest: dict) -> None:
 
 
 @pytest.mark.parametrize(
-    "legacy_revision", [as_revision_0003, as_revision_0004, as_revision_0005, as_revision_0006]
+    "legacy_revision",
+    [as_revision_0003, as_revision_0004, as_revision_0005, as_revision_0006, as_revision_0007],
 )
 def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
     harness: Harness, project_id: str, tmp_path: Path, legacy_revision
@@ -258,7 +267,7 @@ def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
     assert created.status_code == 201
     current = tmp_path / "current.tar.gz"
     manifest = create_backup(harness.factory, harness.settings.storage_dir, current)
-    assert manifest["revision"] == "0007" and manifest["row_counts"]["api_token"] == 0
+    assert manifest["revision"] == "0008" and manifest["row_counts"]["api_token"] == 0
     assert manifest["row_counts"]["component_occurrence"] == 1
     # Rewrite the populated archive as the older revision would have produced it.
     legacy = tmp_path / "legacy.tar.gz"
@@ -276,7 +285,7 @@ def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
             target.addfile(info, io.BytesIO(content))
     engine, factory = empty_database()
     restored = restore_backup(factory, tmp_path / "restored", legacy)
-    assert restored["revision"] == "0007"
+    assert restored["revision"] == "0008"
     with factory() as db:
         assert {scan.mode for scan in db.scalars(select(Scan))} == {"monitor"}
         inventory = db.scalars(select(Inventory)).one()
@@ -284,7 +293,9 @@ def test_backups_exclude_api_tokens_and_upgrade_older_revisions(
         assert db.scalars(select(Finding)).one().status == "open"
         assert db.scalar(select(ApiToken)) is None
         # Older archives have no package index; it fills on the next scan.
-        assert db.scalar(select(ComponentOccurrence)) is None
+        if legacy_revision is not as_revision_0007:
+            assert db.scalar(select(ComponentOccurrence)) is None
+        assert db.get(SystemState, 1).audit_retention_days == 90
     engine.dispose()
 
 

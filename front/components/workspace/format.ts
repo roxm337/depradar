@@ -58,7 +58,7 @@ export function cadence(hours: number) {
 
 export function accessLabel(scopes: string[]) {
   const key = [...scopes].sort().join(" ");
-  const preset = Object.values(tokenPresets).find((value) => [...value.scopes].sort().join(" ") === key);
+  const preset = [...Object.values(tokenPresets), ...Object.values(assistantPresets)].find((value) => [...value.scopes].sort().join(" ") === key);
   return preset?.label ?? `${scopes.length} custom scope${scopes.length === 1 ? "" : "s"}`;
 }
 
@@ -181,6 +181,12 @@ export const tokenPresets: Record<string, { label: string; detail: string; scope
   checks: { label: "Pull request checks", detail: "Passes or fails pull and merge requests against your policies. Cannot change what DepRadar monitors.", scopes: ["projects:read", "inventories:check", "scans:read", "findings:read"] },
   onboarding: { label: "Default-branch pipeline + project creation", detail: "Same as the default-branch pipeline, and also creates a project when none exists, for CI templates shared across clients.", scopes: ["projects:read", "projects:write", "inventories:write", "scans:read", "findings:read"] },
   reporting: { label: "Read-only reporting", detail: "Read projects, scans, and findings for dashboards and exports.", scopes: ["projects:read", "scans:read", "findings:read"] },
+};
+
+/** Access for AI assistants over MCP. None of it can change findings, alerts, or monitored manifests. */
+export const assistantPresets: Record<string, { label: string; detail: string; scopes: ApiToken["scopes"] }> = {
+  checks: { label: "Read + lockfile checks", detail: "Reads findings, scans, gate decisions, and package search, and runs check scans on lockfiles you paste.", scopes: ["projects:read", "findings:read", "scans:read", "components:read", "inventories:check"] },
+  reading: { label: "Read only", detail: "Reads findings, scans, gate decisions, and package search.", scopes: ["projects:read", "findings:read", "scans:read", "components:read"] },
 };
 
 export function tokenState(token: ApiToken, now: number) {

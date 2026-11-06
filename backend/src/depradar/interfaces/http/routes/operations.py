@@ -41,15 +41,17 @@ def operations_health(db: Db) -> OperationsHealth:
 
 @router.put("/maintenance/retention", response_model=RetentionInput)
 def set_retention(body: RetentionInput, db: Db) -> RetentionInput:
-    housekeeping.set_retention(db, body.scan_days, body.delivery_days)
-    return body
+    housekeeping.set_retention(db, body.scan_days, body.delivery_days, body.audit_days)
+    return get_retention(db)
 
 
 @router.get("/maintenance/retention", response_model=RetentionInput)
 def get_retention(db: Db) -> RetentionInput:
     state = housekeeping.retention_settings(db)
     return RetentionInput(
-        scan_days=state.scan_retention_days, delivery_days=state.delivery_retention_days
+        scan_days=state.scan_retention_days,
+        delivery_days=state.delivery_retention_days,
+        audit_days=state.audit_retention_days,
     )
 
 

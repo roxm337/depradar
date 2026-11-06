@@ -288,6 +288,68 @@ def test_populated_database_upgrades_from_0006_and_back(monkeypatch: pytest.Monk
         get_settings.cache_clear()
 
 
+def test_tokens_keep_their_interface_across_0008(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0008 makes existing tokens REST tokens; downgrading removes assistant tokens."""
+    from alembic import command
+    from alembic.autogenerate import compare_metadata
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+
+    from depradar.config import get_settings
+    from depradar.domain.entities import Base
+
+    schema = "migration_0008_" + uuid4().hex
+    url = os.environ["DEPRADAR_TEST_DATABASE_URL"]
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    insert = text(
+        "INSERT INTO api_token (id, name, token_hash, display_prefix, scopes, created_at,"
+        " expires_at, kind) VALUES (:id, 'CI', :hash, 'depradar_abc', '[\"scans:read\"]',"
+        " now(), now() + interval '1 day', 'static')"
+    )
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'SET search_path TO "{schema}"'))
+            connection.commit()
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0007")
+            pipeline = str(uuid4())
+            connection.execute(insert, {"id": pipeline, "hash": "a" * 64})
+            connection.commit()
+            command.upgrade(config, "head")
+            drift = [
+                change
+                for change in compare_metadata(
+                    MigrationContext.configure(connection), Base.metadata
+                )
+                if any(name in str(change) for name in ("audit", "audience"))
+            ]
+            assert drift == []
+            audiences = "SELECT audience FROM api_token"
+            assert connection.execute(text(audiences)).scalars().all() == ["api"]
+            retention = "SELECT audit_retention_days FROM system_state"
+            assert connection.execute(text(retention)).scalars().all() == [90]
+            assistant = str(uuid4())
+            connection.execute(insert, {"id": assistant, "hash": "b" * 64})
+            connection.execute(
+                text("UPDATE api_token SET audience = 'mcp' WHERE id = :id"), {"id": assistant}
+            )
+            connection.commit()
+            command.downgrade(config, "0007")
+            # Without the audience column an assistant token would work on the REST API.
+            remaining = connection.execute(text("SELECT id FROM api_token")).scalars().all()
+            assert remaining == [pipeline]
+            assert "audit_event" not in inspect(connection).get_table_names(schema)
+            connection.commit()
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        engine.dispose()
+        get_settings.cache_clear()
+
+
 def test_backup_restore_drill_on_postgresql(
     harness: Harness, project_id: str, tmp_path: Path
 ) -> None:

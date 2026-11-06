@@ -16,6 +16,7 @@ from depradar.domain.entities import (
     Scan,
     utcnow,
 )
+from depradar.domain.security import Principal
 
 
 def record_change(db: Session, finding: Finding, scan: Scan, kind: str) -> None:
@@ -51,9 +52,10 @@ def latest_scan(db: Session, finding: Finding) -> Scan | None:
     return scan
 
 
-def get_finding(db: Session, finding_id: str) -> Finding:
+def get_finding(db: Session, finding_id: str, principal: Principal | None = None) -> Finding:
     finding = db.get(Finding, finding_id)
-    if finding is None:
+    # Restricted tokens get the same answer for other projects as for missing findings.
+    if finding is None or (principal is not None and not principal.allows(finding.project_id)):
         raise NotFound("Finding not found")
     return finding
 

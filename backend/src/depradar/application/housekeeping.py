@@ -11,6 +11,7 @@ from depradar.application.notifications import rebuild_digest
 from depradar.application.ports import InventoryStore
 from depradar.domain.entities import (
     ApiToken,
+    AuditEvent,
     ChangeEvent,
     ComponentOccurrence,
     Delivery,
@@ -190,6 +191,11 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
         db.add(FileDeletion(inventory_id=inventory.id))
         db.delete(inventory)
     prune_decisions(db, scan_cutoff)
+    db.execute(
+        delete(AuditEvent).where(
+            AuditEvent.created_at < utcnow() - timedelta(days=state.audit_retention_days)
+        )
+    )
     # Exchanged identity tokens live 30 minutes; keep a day for troubleshooting, then drop them.
     db.execute(
         delete(ApiToken).where(
@@ -224,10 +230,14 @@ def retention_settings(db: Session) -> SystemState:
     return state
 
 
-def set_retention(db: Session, scan_days: int, delivery_days: int) -> None:
+def set_retention(
+    db: Session, scan_days: int, delivery_days: int, audit_days: int | None = None
+) -> None:
     state = retention_settings(db)
     state.scan_retention_days = scan_days
     state.delivery_retention_days = delivery_days
+    if audit_days is not None:
+        state.audit_retention_days = audit_days
     db.commit()
 
 

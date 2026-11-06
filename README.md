@@ -214,6 +214,15 @@ included in backups. **Policies** hold the installation and per-project minimums
 **Decisions** lists every recorded gate with its policy versions, input hashes, scanner
 versions, and the exceptions that applied. See [CI/CD integration](docs/CI_CD.md).
 
+## AI assistants (MCP)
+
+Claude Code, Cursor, VS Code, and other MCP clients can ask DepRadar what is most urgent, why a
+gate failed, or whether a lockfile is safe. Turn the endpoint on with `DEPRADAR_MCP_ENABLED=true`,
+create a token in Settings → **AI assistants**, and connect to `/api/mcp`. Assistant tokens work
+only on the MCP endpoint, can be restricted to one client project, and can read and run check
+scans but never change findings, alerts, or monitored state. Every call is audited. See
+[AI assistants](docs/MCP.md).
+
 ## Notifications, monitoring, and finding decisions
 
 Set `DEPRADAR_SMTP_PASSWORD` and/or `DEPRADAR_TELEGRAM_BOT_TOKEN` in your private environment,

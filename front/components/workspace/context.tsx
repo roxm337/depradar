@@ -9,7 +9,7 @@ import { DEFAULT_RULES, normalizeRules, reportFile } from "@/components/workspac
 
 export type Session = "checking" | "ready" | "offline";
 export type Notice = { kind: "success" | "error" | "info"; text: string } | null;
-export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token" } | null;
+export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token"; audience?: TokenAudience } | null;
 export type Filters = FindingFilters;
 export type EmailInput = { host: string; port: number; username: string; sender: string; recipient: string; tls_mode: string };
 export type UploadInput = { projectId: string; file: File; targetPath: string; revision: string };
@@ -66,7 +66,7 @@ function useWorkspaceState() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [policy, setPolicy] = useState<NotificationPolicy>(defaultPolicy);
-  const [retention, setRetention] = useState<RetentionPolicy>({ scan_days: 30, delivery_days: 30 });
+  const [retention, setRetention] = useState<RetentionPolicy>({ scan_days: 30, delivery_days: 30, audit_days: 90 });
   const [health, setHealth] = useState<OperationsHealth | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [decisions, setDecisions] = useState<DecisionSummary[]>([]);
