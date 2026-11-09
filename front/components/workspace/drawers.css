@@ -22,6 +22,8 @@
 .drawer-card > .field { padding: 12px 0; border-top: 1px solid var(--line); }
 .drawer-card > .field-hint { padding-bottom: 12px; }
 .drawer-card > .field:first-child { border-top: 0; }
+.rename-row { display: flex; gap: 8px; }
+.rename-row .input { flex: 1; min-width: 0; }
 .block-title .block-count { margin-left: auto; font-weight: 450; }
 .priority-row { align-items: center; }
 .priority-row .cell-main { gap: 2px; }

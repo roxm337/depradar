@@ -218,6 +218,7 @@ function useWorkspaceState() {
       window.location.replace("/login?signed_out=1");
     },
     createProject: (name: string, description: string) => run(() => api("projects", json("POST", { name, description })), `Project ${name} created.`),
+    renameProject: (project: Project, name: string) => run(() => api(`projects/${project.id}`, json("PATCH", { name })), `${project.name} renamed to ${name}.`),
     deleteProject: async (project: Project) => {
       const done = await run(() => api(`projects/${project.id}`, { method: "DELETE" }), `Project ${project.name} deleted.`);
       if (done) setProjectId(null);
