@@ -84,3 +84,52 @@ jobs:
       - name: Remove disposable verification environment
         if: always()
         run: docker compose -f compose.verify.yaml down -v
+
+  mcp-stack:
+    name: MCP against the Compose stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install uv==0.13.1
+      - name: Start the production Compose stack with MCP on
+        run: |
+          password=$(openssl rand -hex 16) bootstrap=$(openssl rand -hex 24) owner=$(openssl rand -hex 16)
+          echo "::add-mask::$password"; echo "::add-mask::$bootstrap"; echo "::add-mask::$owner"
+          {
+            echo "STACK_ENV_FILE=$RUNNER_TEMP/mcp-stack.env"
+            echo "DEPRADAR_STACK_BOOTSTRAP_TOKEN=$bootstrap"
+            echo "DEPRADAR_STACK_OWNER_PASSWORD=$owner"
+          } >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/mcp-stack.env" <<EOF
+          POSTGRES_PASSWORD=$password
+          DEPRADAR_BOOTSTRAP_TOKEN=$bootstrap
+          DEPRADAR_API_PORT=8010
+          DEPRADAR_MCP_ENABLED=true
+          DEPRADAR_MCP_RATE_LIMIT_PER_MINUTE=60
+          DEPRADAR_MCP_ALLOWED_ORIGINS=["https://assistant.example.test"]
+          EOF
+          docker compose --project-name depradar-mcp --env-file "$RUNNER_TEMP/mcp-stack.env" \
+            up --detach --build api worker
+      - name: Assistants through the official MCP client
+        working-directory: backend
+        env:
+          DEPRADAR_STACK_URL: http://127.0.0.1:8010
+          DEPRADAR_STACK_RATE_LIMIT: "60"
+          DEPRADAR_STACK_ALLOWED_ORIGIN: https://assistant.example.test
+        run: |
+          uv sync --locked
+          uv run pytest -q tests/test_mcp_stack.py
+      - name: Stack logs
+        if: failure()
+        run: >-
+          docker compose --project-name depradar-mcp --env-file "$STACK_ENV_FILE"
+          logs --no-color api worker scanner
+      - name: Remove the stack
+        if: always()
+        run: docker compose --project-name depradar-mcp --env-file "$STACK_ENV_FILE" down -v
