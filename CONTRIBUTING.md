@@ -40,10 +40,18 @@ first.
 | Frontend | `front/` | `pnpm lint` · `pnpm test` · `pnpm build` |
 | Installer | repository root | `python3 -m unittest discover -s deploy/tests -v` |
 | Integration | repository root | `docker compose -f compose.verify.yaml up --build --abort-on-container-exit --exit-code-from tests`, then `docker compose -f compose.verify.yaml down -v` |
+| MCP stack | `backend/` | Start the Compose stack with MCP on, then `uv run pytest -q tests/test_mcp_stack.py` with the `DEPRADAR_STACK_*` variables set |
 
 The integration stack runs the backend suite against PostgreSQL, the real pinned OSV scanner, and
 captured SMTP and Telegram servers. Run it locally when you change scanning, jobs, notifications,
 migrations, or backups. CI also runs the CI client on Python 3.9 and 3.14.
+
+The MCP stack suite connects the official MCP client over HTTP to the production Compose stack,
+so it also covers the transport, scans the real worker runs, the CI client's gate decisions, and
+the MCP settings Compose passes to the API. Run it when you change the MCP server, tokens, or the
+API's environment. The "MCP against the Compose stack" job in `.github/workflows/backend.yml`
+shows the setup; locally, give the stack its own `--project-name` and `DEPRADAR_API_PORT` so it
+never touches your own installation.
 
 ## Where code goes
 
