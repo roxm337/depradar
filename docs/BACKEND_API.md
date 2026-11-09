@@ -152,8 +152,9 @@ Other ecosystems, including npm and Go, match exactly. Version ranges are not co
 Every monitor scan that returns a report indexes every package it lists, including ones without
 advisories and unpinned ones. A failed rescan keeps the earlier list. Check-mode (pull request)
 scans, superseded scans, and retired manifests never enter the index, and only the newest
-monitored snapshot of each manifest path is searched; older snapshots keep their lists until
-retention removes them. Answers reflect the last uploaded manifest, not what is deployed.
+monitored snapshot of each manifest path is searched. The daily cleanup drops the lists of older
+and retired snapshots, including snapshots kept as audit evidence. Answers reflect the last
+uploaded manifest, not what is deployed.
 
 Every response carries `coverage`, also available from `GET /api/components/coverage`: how many
 current manifests are indexed, the ecosystems they list, `not_indexed` manifests (none of their

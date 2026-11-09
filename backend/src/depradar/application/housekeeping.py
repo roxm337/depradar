@@ -3,9 +3,10 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, distinct, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
+from depradar.application.components import current_snapshots
 from depradar.application.errors import Conflict
 from depradar.application.notifications import rebuild_digest
 from depradar.application.ports import InventoryStore
@@ -141,6 +142,14 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
             or_(Delivery.batch_id.is_(None), Delivery.batch_id.not_in(active_batches)),
         )
     )
+    # Search reads only each manifest's current snapshot, so older and retired snapshots drop
+    # their package lists now, even when their scans and inventory stay as audit evidence.
+    current = {inventory.id for inventory in current_snapshots(db)}
+    indexed = set(db.scalars(select(distinct(ComponentOccurrence.inventory_id))))
+    for inventory_id in indexed - current:
+        db.execute(
+            delete(ComponentOccurrence).where(ComponentOccurrence.inventory_id == inventory_id)
+        )
     # Keep event-bearing scans as audit evidence and every inventory's newest scan.
     latest: set[str] = set()
     for scan in db.scalars(select(Scan).order_by(Scan.created_at.desc(), Scan.id.desc())):

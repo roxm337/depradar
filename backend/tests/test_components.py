@@ -324,6 +324,32 @@ def test_retention_and_project_deletion_remove_rows(harness: Harness, project_id
     assert remaining and all(r.project_id == kept for r in remaining)
 
 
+def test_old_and_retired_snapshots_drop_their_rows_but_stay_as_evidence(
+    harness: Harness, project_id: str
+) -> None:
+    # The first snapshot opens the minimist finding, so retention keeps it as audit evidence.
+    old = scanned(harness, project_id)
+    current = scanned(harness, project_id)
+    assert rows(harness, old) and rows(harness, current)
+    response = harness.client.post("/api/maintenance/retention/run", headers=harness.headers)
+    assert response.status_code == 200, response.text
+    with harness.factory() as db:
+        assert db.get(Inventory, old) is not None
+    assert rows(harness, old) == []
+    assert {r.inventory_id for r in rows(harness)} == {current}
+    assert search(harness.client, "minimist")["matches"]
+
+    retired = harness.client.post(
+        f"/api/projects/{project_id}/targets/retire",
+        json={"target_path": "package-lock.json"},
+        headers=harness.headers,
+    )
+    assert retired.status_code == 200, retired.text
+    response = harness.client.post("/api/maintenance/retention/run", headers=harness.headers)
+    assert response.status_code == 200, response.text
+    assert rows(harness) == []
+
+
 def test_package_search_needs_the_owner_session(
     harness: Harness, project_id: str, anonymous: TestClient
 ) -> None:
