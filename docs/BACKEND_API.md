@@ -138,8 +138,8 @@ never retire anything on their own. Responds with `target_path`, `retired_invent
 
 `GET /api/components?name=lodash` answers which projects use a package, across the current
 monitored manifest of every project (owner session only; API tokens cannot search). Optional
-`ecosystem` (for example `npm` or `PyPI`) and `version` (exact match, as the manifest records it)
-narrow the search. [AI assistant tokens](MCP.md) with `components:read` search through the
+`ecosystem` (for example `npm` or `PyPI`, in any letter case) and `version` (exact match, as the
+manifest records it) narrow the search; a blank value is ignored, and a blank name is refused. [AI assistant tokens](MCP.md) with `components:read` search through the
 `search_packages` MCP tool, limited to their project when restricted. Each match gives the package as the manifest spells it, its version (empty when
 unpinned), project, manifest path, revision, upload time, the scan that indexed it with its
 completeness, and the number of open findings for that package in that manifest. At most 1,000
@@ -152,8 +152,9 @@ Other ecosystems, including npm and Go, match exactly. Version ranges are not co
 Every monitor scan that returns a report indexes every package it lists, including ones without
 advisories and unpinned ones. A failed rescan keeps the earlier list. Check-mode (pull request)
 scans, superseded scans, and retired manifests never enter the index, and only the newest
-monitored snapshot of each manifest path is searched; older snapshots keep their lists until
-retention removes them. Answers reflect the last uploaded manifest, not what is deployed.
+monitored snapshot of each manifest path is searched. The daily cleanup drops the lists of older
+and retired snapshots, including snapshots kept as audit evidence. Answers reflect the last
+uploaded manifest, not what is deployed.
 
 Every response carries `coverage`, also available from `GET /api/components/coverage`: how many
 current manifests are indexed, the ecosystems they list, `not_indexed` manifests (none of their

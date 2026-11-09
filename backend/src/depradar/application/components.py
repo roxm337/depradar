@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import and_, delete, distinct, func, insert, or_, select, update
 from sqlalchemy.orm import Session
 
+from depradar.application.errors import Invalid
 from depradar.domain.components import components, normalize_name
 from depradar.domain.entities import (
     ComponentOccurrence,
@@ -170,10 +171,23 @@ def search(
     ecosystem: str | None = None,
     version: str | None = None,
 ) -> SearchResult:
-    """Where a package is used in current monitored manifests, with what qualifies the answer."""
+    """Where a package is used in current monitored manifests, with what qualifies the answer.
+
+    Callers, assistants especially, send blank optional fields and their own casing of an
+    ecosystem; neither may turn into an empty answer that reads as "not used".
+    """
+    if not name.strip():
+        raise Invalid("Pass a package name")
     covered = coverage(db, principal)
     by_inventory = {s.inventory.id: s for s in covered.snapshots if s.scan is not None}
-    ecosystems = [ecosystem] if ecosystem else covered.ecosystems
+    wanted = (ecosystem or "").strip().casefold()
+    ecosystems = (
+        [value for value in covered.ecosystems if value.casefold() == wanted]
+        if wanted
+        else covered.ecosystems
+    )
+    # A blank version is no filter; unpinned packages are found by leaving it out.
+    exact = (version or "").strip()
     if not by_inventory or not ecosystems:
         return SearchResult([], covered, truncated=False)
     names = or_(
@@ -188,8 +202,8 @@ def search(
     query = select(ComponentOccurrence).where(
         names, ComponentOccurrence.inventory_id.in_(list(by_inventory))
     )
-    if version is not None:
-        query = query.where(ComponentOccurrence.version == version.strip())
+    if exact:
+        query = query.where(ComponentOccurrence.version == exact)
     rows = list(
         db.scalars(
             query.order_by(

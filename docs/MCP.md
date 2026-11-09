@@ -219,11 +219,15 @@ Prompts take DepRadar IDs only, and they are listed only to tokens with the scop
 - **Untrusted text is labelled:** values DepRadar did not write itself sit under an `untrusted`
   key in every result. That covers package names, versions, manifest paths, revisions, advisory
   summaries, and scan errors. These values come from uploaded manifests (a pull request author
-  controls those) or from public advisory feeds. They are stripped of control and
-  bidirectional-override characters and capped in length. The server instructions and every
-  prompt tell the assistant to treat them as data, never as instructions.
-- **Audit:** every tool call is recorded with the token, the assistant's self-reported client
-  name, the tool, the project, the outcome, and the duration. Arguments and results are never
+  controls those) or from public advisory feeds. All of it is stripped of control and
+  bidirectional-override characters and capped in length. Project names and descriptions stay
+  top-level, but pipelines and assistants can set them, so they are cleaned the same way. The
+  server instructions and every prompt tell the assistant to treat all of this, and the gate
+  reasons that quote project names and paths, as data, never as instructions.
+- **Audit:** every tool call that reaches DepRadar is recorded with the token, the assistant's
+  self-reported client name, the tool, the project, the outcome, and the duration. Calls the
+  MCP layer rejects for malformed arguments, and prompt requests, are not recorded; prompts only
+  return fixed text around an ID and read no data. Arguments and results are never
   recorded; even a hash of a short value such as a package name could be guessed. Settings → **AI
   assistants** shows recent activity, and Settings → **Data retention** sets how long it is kept
   (90 days by default). Activity is included in backups; tokens are not.

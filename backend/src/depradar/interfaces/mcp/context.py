@@ -117,7 +117,10 @@ def audited(
                         return fn(*args, **kwargs)
                     finally:
                         CALL.reset(token)
-            except ToolError:
+            except ToolError as exc:
+                # A tool body may refuse a call itself; a missing scope is already "denied".
+                if outcome != "denied":
+                    outcome, detail = "error", str(exc)
                 raise
             except ApplicationError as exc:
                 outcome, detail = "error", str(exc)

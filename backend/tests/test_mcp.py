@@ -222,6 +222,11 @@ def test_overview_findings_and_search_respect_project_restrictions(
         assert refused["isError"] and "not found" in refused["content"][0]["text"], name
     matches = ok(anonymous, token, "search_packages", name="minimist")["matches"]
     assert [match["project_id"] for match in matches] == [own]
+    # Assistants often send blank optional fields or their own casing of an ecosystem.
+    loose = ok(anonymous, token, "search_packages", name="minimist", ecosystem="NPM", version="")
+    assert loose["matches"] == matches
+    blank = tool(anonymous, token, "search_packages", name="  ")
+    assert blank["isError"] and "package name" in blank["content"][0]["text"]
     overview = ok(anonymous, token, "get_project_overview", project_id=own)
     manifest = overview["manifests"][0]
     assert manifest["trustworthy"] and manifest["untrusted"]["path"] == "package-lock.json"
