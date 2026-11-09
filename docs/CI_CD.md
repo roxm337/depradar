@@ -54,11 +54,13 @@ SHA-256 digest. Store it as a masked secret named `DEPRADAR_TOKEN`.
 | `scans:read` | Read scans and evaluate gates and reports |
 | `findings:read` | List project findings |
 | `components:read` | Search packages; [AI assistant tokens](MCP.md) only |
+| `scans:write` | Rescan stored monitored manifests; AI assistant tokens only |
+| `monitoring:tighten` | Turn monitoring and alerts on or make them stricter, never looser; AI assistant tokens only |
 
 - **One interface per token:** tokens default to `"audience": "api"` and work on the REST API
   only. `"audience": "mcp"` creates an [AI assistant token](MCP.md), which works on `/api/mcp`
-  only and holds at most `projects:read`, `findings:read`, `scans:read`, `components:read`, and
-  `inventories:check`.
+  only. It can hold every scope except `inventories:write`, so it never uploads monitored
+  manifests.
 - **Restrict per client:** set `project_id` so a client's pipeline can only see and upload to
   its own project. Other projects return 404. Restricted tokens cannot create projects.
   Deleting the project deletes its restricted tokens.
