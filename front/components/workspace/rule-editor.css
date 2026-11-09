@@ -8,6 +8,11 @@
 .rule-group .toggle-row b { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .rule-lock { height: 18px; font-size: 11px; font-weight: 500; }
 .rule-epss { align-items: flex-start; }
+.rule-epss-title { position: relative; }
+.rule-epss-help { display: inline-flex; }
+.rule-epss-help-button { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 50%; color: var(--text-2); font-size: 12px; cursor: help; }
+.rule-epss-help-button:hover { background: var(--surface-2); color: var(--text); }
+.rule-epss-tooltip { position: absolute; top: 100%; left: 0; z-index: 10; width: min(300px, calc(100vw - 64px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text-2); box-shadow: var(--shadow-pop); font-size: 12px; font-weight: 400; line-height: 1.5; }
 .rule-epss .switch { margin-top: 2px; }
 .rule-epss-field { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .rule-epss-field .input { width: 96px; }

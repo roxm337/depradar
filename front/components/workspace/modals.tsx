@@ -33,7 +33,7 @@ function ProjectModal({ onClose }: { onClose: () => void }) {
     <Modal title="New project" description="One project per client application or repository." onClose={onClose}>
       <form onSubmit={submit}>
         <div className="modal-body">
-          <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={120} placeholder="acme/storefront" autoFocus/><span className="field-hint">Use the repository name so CI pipelines can find it automatically.</span></label>
+          <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={120} placeholder="acme/storefront" autoFocus/><span className="field-hint">Use the repository name, so CI pipelines find the project by name.</span></label>
           <label className="field"><span className="field-label">Description <span>Optional</span></span><textarea className="textarea" name="description" maxLength={1000} placeholder="What the project is and who owns it"/></label>
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy}>{busy && <span className="spinner"/>}Create project</button></div>
@@ -68,7 +68,7 @@ function UploadModal({ onClose, initialProject }: { onClose: () => void; initial
   }
 
   return (
-    <Modal title="Upload a manifest" description="A lockfile or SBOM is stored as an immutable snapshot and scanned right away." onClose={onClose}>
+    <Modal title="Upload a manifest" description="A manifest is a lockfile or SBOM that lists the exact package versions a project uses. DepRadar keeps an unchangeable copy and scans it right away." onClose={onClose}>
       <form onSubmit={submit}>
         <div className="modal-body">
           {projects.length ? <label className="field"><span className="field-label">Project</span><select className="select" value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label> : <div className="callout"><Icon name="box" size={16}/>Create a project first, then upload its lockfile.</div>}
@@ -77,10 +77,10 @@ function UploadModal({ onClose, initialProject }: { onClose: () => void; initial
             <Icon name={file ? "file" : "upload"} size={22}/>
             {file ? <><b>{file.name}</b><small>{bytes(file.size)} · {valid ? inventoryKind(file.name) : "Unsupported file type"}</small></> : <><b>Drop a lockfile here, or browse</b><small>npm, pnpm, Yarn, Bun, Composer, Poetry, uv, pip, Pipenv, Bundler, Cargo, Go, Pub, or CycloneDX · up to 10 MB</small></>}
           </label>
-          {file && !valid && <div className="callout is-danger"><Icon name="warning" size={16}/>DepRadar accepts lockfiles and CycloneDX SBOMs. Manifests without pinned versions, such as package.json, cannot be scanned reliably.</div>}
+          {file && !valid && <div className="callout is-danger"><Icon name="warning" size={16}/>DepRadar accepts lockfiles and CycloneDX SBOMs. Files without exact versions, such as package.json, cannot be scanned reliably; upload the lockfile next to it instead.</div>}
           <div className="form-row">
-            <label className="field"><span className="field-label">Manifest path <span>Optional</span></span><input className="input mono" value={targetPath} onChange={(event) => setTargetPath(event.target.value)} maxLength={512} placeholder="apps/web/pnpm-lock.yaml"/></label>
-            <label className="field"><span className="field-label">Revision <span>Optional</span></span><input className="input mono" value={revision} onChange={(event) => setRevision(event.target.value)} maxLength={200} placeholder="main@4f2a9c1"/></label>
+            <label className="field"><span className="field-label">Manifest path <span>Optional</span></span><input className="input mono" value={targetPath} onChange={(event) => setTargetPath(event.target.value)} maxLength={512} placeholder="apps/web/pnpm-lock.yaml"/><span className="field-hint">Where the file sits in the repository. An upload to the same path replaces the previous version.</span></label>
+            <label className="field"><span className="field-label">Revision <span>Optional</span></span><input className="input mono" value={revision} onChange={(event) => setRevision(event.target.value)} maxLength={200} placeholder="main@4f2a9c1"/><span className="field-hint">The branch or commit the file comes from, for your reference.</span></label>
           </div>
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !file || !valid || !projectId}>{busy ? <span className="spinner"/> : <Icon name="upload" size={15}/>}Upload and scan</button></div>
@@ -111,10 +111,10 @@ function RetireModal({ onClose, projectId, targetPath }: { onClose: () => void; 
         <div className="modal-body">
           <div className="callout"><Icon name="file" size={16}/><span className="mono">{targetPath}</span></div>
           <ul className="retire-effects">
-            <li>Scheduled rechecks stop, and it no longer counts toward project coverage.</li>
+            <li>DepRadar stops scanning it on a schedule, and it no longer counts when checking whether the project is fully scanned.</li>
             <li>{open ? `Its ${open} open finding${open === 1 ? " is" : "s are"} resolved` : "Any open findings are resolved"} without sending alerts.</li>
-            <li>Scans, findings, and decisions stay in the history.</li>
-            <li>Uploading it again, from the dashboard or CI, resumes monitoring.</li>
+            <li>Its scans, findings, and reviews stay in the history.</li>
+            <li>Uploading it again, from the dashboard or CI, starts monitoring it again.</li>
           </ul>
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-danger" disabled={busy}>{busy && <span className="spinner"/>}Retire manifest</button></div>
@@ -139,7 +139,7 @@ function RiskModal({ onClose, findingId }: { onClose: () => void; findingId: str
     setBusy(false);
   }
   return (
-    <Modal title="Accept risk temporarily" description="The finding stays open and visible, but alerts and CI gates ignore it until the acceptance expires." onClose={onClose}>
+    <Modal title="Accept risk temporarily" description="The finding stays open and visible, but it sends no alerts and does not fail pipeline checks until the acceptance expires." onClose={onClose}>
       <form onSubmit={submit}>
         <div className="modal-body">
           <div className="callout"><Icon name="shield" size={16}/><span><Pkg name={finding.package_name} version={finding.package_version}/> · {finding.advisory_ids.join(", ")}</span></div>
@@ -173,7 +173,7 @@ function EmailModal({ onClose }: { onClose: () => void }) {
     setBusy(false);
   }
   return (
-    <Modal title={step === "configure" ? "Email destination" : "Verify the address"} description={step === "configure" ? "Alerts are sent through your SMTP server. The password stays in the backend environment as DEPRADAR_SMTP_PASSWORD." : "Enter the code DepRadar just sent. It expires after 15 minutes."} onClose={onClose} steps={[step === "configure" ? 1 : 2, 2]}>
+    <Modal title={step === "configure" ? "Email destination" : "Verify the address"} description={step === "configure" ? "Alerts are sent through your own mail (SMTP) server. Its password is not entered here: set it on the server as DEPRADAR_SMTP_PASSWORD." : "Enter the code DepRadar just sent. It expires after 15 minutes."} onClose={onClose} steps={[step === "configure" ? 1 : 2, 2]}>
       {step === "configure" ? (
         <form onSubmit={configure}>
           <div className="modal-body">
@@ -209,12 +209,12 @@ function TelegramModal({ onClose }: { onClose: () => void }) {
   async function start() { setBusy(true); setCommand((await actions.pairTelegram()) ?? ""); setBusy(false); }
   async function confirm() { setBusy(true); if (await actions.confirmTelegram()) onClose(); setBusy(false); }
   return (
-    <Modal title="Telegram chat" description="Pair a private chat with your own bot. Its token stays in the backend environment as DEPRADAR_TELEGRAM_BOT_TOKEN." onClose={onClose} steps={[command ? 2 : 1, 2]}>
+    <Modal title="Telegram chat" description="Connect a private chat with your own Telegram bot. The bot token is not entered here: set it on the server as DEPRADAR_TELEGRAM_BOT_TOKEN." onClose={onClose} steps={[command ? 2 : 1, 2]}>
       <div className="modal-body">
         {command ? <>
           <div className="secret"><small>Send this message to your bot in a private chat within 15 minutes</small><code>{command}</code><div><CopyButton value={command} label="Copy command"/></div></div>
-          <p className="field-hint">Group chats are ignored. DepRadar only reads the pairing command; the bot never accepts other instructions.</p>
-        </> : <div className="callout"><Icon name="send" size={16}/>DepRadar generates a one-time command. Sending it from your private chat proves you own the destination.</div>}
+          <p className="field-hint">Group chats are ignored. DepRadar only reads the pairing command; the bot ignores every other message.</p>
+        </> : <div className="callout"><Icon name="send" size={16}/>DepRadar creates a one-time command. Sending it to your bot from a private chat proves the chat is yours.</div>}
       </div>
       <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button>{command ? <button className="btn btn-primary" disabled={busy} onClick={() => void confirm()}>{busy && <span className="spinner"/>}I sent it</button> : <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>{busy && <span className="spinner"/>}Start pairing</button>}</div>
     </Modal>
@@ -259,18 +259,18 @@ function TokenModal({ onClose, audience }: { onClose: () => void; audience: Toke
   }
   if (created) {
     return (
-      <Modal title="Copy your token now" description="It is shown once. DepRadar stores only a hash, so a lost token must be replaced." onClose={finish} steps={[2, 2]}>
+      <Modal title="Copy your token now" description="It is shown only once. DepRadar keeps only a fingerprint of it, so a lost token cannot be shown again and must be replaced." onClose={finish} steps={[2, 2]}>
         <div className="modal-body">
           <div className="secret"><small>{created.name} · expires {new Date(created.expires_at).toLocaleDateString()}</small><code>{created.token}</code><div><CopyButton value={created.token} label="Copy token"/></div></div>
           <div className="callout"><Icon name="key" size={16}/><span>Save it as a masked CI secret named <span className="inline-code">DEPRADAR_TOKEN</span>. Scopes: {created.scopes.join(", ")}.</span></div>
-          {created.scopes.includes("inventories:check") && !created.scopes.includes("inventories:write") && <div className="callout"><Icon name="lock" size={16}/><span>This token can only run check scans. Use it in pull and merge request jobs; default-branch runs that keep manifests current need a default-branch token or a trusted identity.</span></div>}
+          {created.scopes.includes("inventories:check") && !created.scopes.includes("inventories:write") && <div className="callout"><Icon name="lock" size={16}/><span>This token can only check changes; it cannot change what DepRadar monitors. Use it in pull and merge request jobs. Jobs on the default branch that upload monitored manifests need a “Default-branch pipeline” token or a trusted identity.</span></div>}
         </div>
         <div className="modal-foot"><button className="btn btn-primary" onClick={finish}><Icon name="check" size={15}/>Done</button></div>
       </Modal>
     );
   }
   return (
-    <Modal title={assistant ? "New AI assistant token" : "New CI/CD token"} description={assistant ? (actionScopes.length ? "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP and make the changes you allow below." : "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP.") : "Pipelines use tokens to upload lockfiles and evaluate the dependency gate."} onClose={onClose} steps={[1, 2]}>
+    <Modal title={assistant ? "New AI assistant token" : "New CI/CD token"} description={assistant ? (actionScopes.length ? "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP and make the changes you allow below." : "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP.") : "Pipelines use a token to upload manifests and check changes against your policies."} onClose={onClose} steps={[1, 2]}>
       <form onSubmit={submit}>
         <div className="modal-body">
           <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={100} placeholder={assistant ? "Laptop · Claude Code" : "acme-storefront · GitHub Actions"} autoFocus/></label>
@@ -283,10 +283,10 @@ function TokenModal({ onClose, audience }: { onClose: () => void; audience: Toke
             <label className="field"><span className="field-label">Project</span><select className="select" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">All projects</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <div className="field"><span className="field-label">Expires after</span><select className="select" value={expiry} onChange={(event) => setExpiry(event.target.value)}>{expiries.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
           </div>
-          {restrictedConflict && <div className="callout is-danger"><Icon name="warning" size={16}/>Project onboarding needs a token that covers every project. Choose “All projects” or another access level.</div>}
+          {restrictedConflict && <div className="callout is-danger"><Icon name="warning" size={16}/>A token that creates projects must work for every project. Choose “All projects” or another access level.</div>}
           {assistant
             ? <p className="field-hint">What the assistant reads is sent to its model provider. For client work, restrict the token to that client’s project.</p>
-            : <p className="field-hint">GitHub Actions and GitLab CI can skip the secret entirely: add a trusted identity in Settings → Trusted identities and pipelines sign in with their short-lived OIDC token.</p>}
+            : <p className="field-hint">GitHub Actions and GitLab CI do not need a stored token: add a trusted identity in Settings → Trusted identities, and pipelines sign in with a temporary token (OIDC) issued by GitHub or GitLab for each run.</p>}
         </div>
         <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || restrictedConflict}>{busy && <span className="spinner"/>}Create token</button></div>
       </form>

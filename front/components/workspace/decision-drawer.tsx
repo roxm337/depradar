@@ -65,7 +65,7 @@ export function DecisionDrawer({ summary, onClose }: { summary: DecisionSummary;
         ) : <DecisionBody detail={detail}/>}
       </div>
       <div className="drawer-foot decision-foot">
-        <span className="foot-meta">Reports render from this stored decision.</span>
+        <span className="foot-meta">Reports are generated from this saved record.</span>
         {REPORTS.map((report) => <ReportButton key={report.format} id={summary.id} format={report.format} label={report.label} download={actions.downloadDecisionReport}/>)}
       </div>
     </Drawer>
@@ -91,8 +91,8 @@ function DecisionBody({ detail }: { detail: DecisionDetail }) {
   // Reasons already name most missing manifests; list only the ones they do not mention.
   const missing = result.missing_manifests.filter((row) => !result.reasons.some((reason) => reason.includes(row.target_path)));
   const verdict = detail.status === "pass"
-    ? "Every scan met the enforced policy."
-    : detail.status === "error" ? "At least one scan could not be evaluated, so the gate cannot pass." : "The change did not meet the enforced policy.";
+    ? "Every scan met the rules applied."
+    : detail.status === "error" ? "At least one scan failed or could not be checked, so the gate cannot pass." : "The change did not meet the rules applied.";
 
   return (
     <>
@@ -105,7 +105,7 @@ function DecisionBody({ detail }: { detail: DecisionDetail }) {
             <div className="decision-counts">
               <span><b className="num">{detail.violations}</b> {detail.violations === 1 ? "violation" : "violations"}</span>
               <span><b className="num">{detail.ignored}</b> ignored</span>
-              <span><b className="num">{detail.below_threshold}</b> below threshold</span>
+              <span><b className="num">{detail.below_threshold}</b> below the severity limit</span>
               {detail.missing_manifests > 0 && <span><b className="num">{detail.missing_manifests}</b> missing {detail.missing_manifests === 1 ? "manifest" : "manifests"}</span>}
             </div>
           </div>
@@ -118,7 +118,7 @@ function DecisionBody({ detail }: { detail: DecisionDetail }) {
           </div>
         )}
         {errors.map((gate) => <div key={gate.scan_id} className="callout is-danger"><Icon name="warning" size={16}/><span><b className="mono">{gate.target_path}</b>: {gate.error}</span></div>)}
-        {incomplete.length > 0 && result.policy.fail_on_incomplete && <div className="callout"><Icon name="warning" size={16}/><span>Complete coverage is required and {incomplete.length === 1 ? "one scan was" : `${incomplete.length} scans were`} partial.</span></div>}
+        {incomplete.length > 0 && result.policy.fail_on_incomplete && <div className="callout"><Icon name="warning" size={16}/><span>The policy requires every package to be checked, and {incomplete.length === 1 ? "one scan" : `${incomplete.length} scans`} could not check them all.</span></div>}
         {violations.length > 0 && (
           <div className="decision-list">
             <span className="decision-list-title">Violations</span>
@@ -131,24 +131,24 @@ function DecisionBody({ detail }: { detail: DecisionDetail }) {
       <section className="block">
         <h3 className="block-title">Policy</h3>
         <dl className="kv">
-          <dt>Enforced</dt><dd>{summarizeGate(result.policy)}</dd>
-          <dt>Central policy</dt><dd><Link className="link" href="/policies">{policyLabel(detail.policy_sources)}<Icon name="arrow" size={13}/></Link></dd>
+          <dt>Rules applied</dt><dd>{summarizeGate(result.policy)}</dd>
+          <dt>Policy versions</dt><dd><Link className="link" href="/policies">{policyLabel(detail.policy_sources)}<Icon name="arrow" size={13}/></Link></dd>
         </dl>
         {result.adjustments.length ? (
           <div className="decision-list">
-            <span className="decision-list-title">Central policy overrode the pipeline</span>
+            <span className="decision-list-title">Your policies made the pipeline’s settings stricter</span>
             {result.adjustments.map((adjustment) => {
               const parts = adjustmentParts(adjustment);
               return (
                 <div className="adjustment" key={`${adjustment.rule}:${adjustment.source}`}>
                   <b>{parts.rule}</b>
-                  <span className="adjustment-change"><span className="sr-only">Pipeline asked for </span><s className="mono">{parts.requested}</s><Icon name="arrow" size={13}/><span className="sr-only">, enforced </span><span className="mono">{parts.enforced}</span></span>
+                  <span className="adjustment-change"><span className="sr-only">Pipeline asked for </span><s className="mono">{parts.requested}</s><Icon name="arrow" size={13}/><span className="sr-only">, applied </span><span className="mono">{parts.enforced}</span></span>
                   <small>by {parts.source}</small>
                 </div>
               );
             })}
           </div>
-        ) : <p className="muted">The pipeline’s request already met the central minimum.</p>}
+        ) : <p className="muted">The pipeline’s own settings were already at least as strict as your policies.</p>}
       </section>
 
       <section className="block">
@@ -159,7 +159,7 @@ function DecisionBody({ detail }: { detail: DecisionDetail }) {
               <span className="manifest-path"><Icon name="file" size={14}/>{input.target_path}</span>
               <div className="manifest-meta">
                 <span className={`tag ${input.mode === "check" ? "tag-check" : ""}`}>{MODE_LABEL[input.mode]}</span>
-                <span className="status"><i className={`dot ${input.complete ? "dot-ok" : "dot-warn"}`}/>{input.complete ? "Complete coverage" : "Partial coverage"}</span>
+                <span className="status"><i className={`dot ${input.complete ? "dot-ok" : "dot-warn"}`}/>{input.complete ? "Every package checked" : "Some packages not checked"}</span>
                 <span>Scanner <span className="mono">{input.engine_version ?? "unknown"}</span></span>
                 <span>SHA-256 <HashChip value={input.sha256} label="SHA-256"/></span>
               </div>
@@ -182,14 +182,14 @@ function DecisionBody({ detail }: { detail: DecisionDetail }) {
               </div>
             ))}
           </div>
-        ) : <p className="muted">No owner exceptions changed this decision.</p>}
+        ) : <p className="muted">No acknowledged or accepted findings changed this result.</p>}
       </section>
 
       <section className="block">
         <h3 className="block-title">Run identity</h3>
-        {detail.actor.verified ? null : <div className="callout"><Icon name="info" size={16}/><span>{detail.actor.kind === "owner" ? "Requested from the dashboard by the owner." : "Not verified: the pipeline used a static API token, so the repository, branch, and commit are as the pipeline reported them."}</span></div>}
+        {detail.actor.verified ? null : <div className="callout"><Icon name="info" size={16}/><span>{detail.actor.kind === "owner" ? "Requested from the dashboard by the owner." : "Not verified: the pipeline signed in with a stored API token, so the repository, branch, and commit are only what the pipeline reported."}</span></div>}
         <dl className="kv">
-          <dt>Signed in with</dt><dd>{detail.actor.verified ? <span className="identity-verified"><Icon name="shield" size={13}/>OIDC token from {providerName(detail.actor.provider)}</span> : detail.actor.kind === "owner" ? "Owner session" : `API token “${actorLabel(detail.actor)}”`}</dd>
+          <dt>Signed in with</dt><dd>{detail.actor.verified ? <span className="identity-verified"><Icon name="shield" size={13}/>Temporary token (OIDC) from {providerName(detail.actor.provider)}</span> : detail.actor.kind === "owner" ? "Owner session" : `API token “${actorLabel(detail.actor)}”`}</dd>
           {detail.actor.repository && <><dt>Repository</dt><dd className="mono">{detail.actor.repository}</dd></>}
           {detail.actor.workflow && <><dt>Workflow</dt><dd className="mono">{detail.actor.workflow}</dd></>}
           {detail.actor.ref && <><dt>Ref</dt><dd>{refLabel(detail.actor.ref)} <span className="mono muted">{detail.actor.ref}</span></dd></>}

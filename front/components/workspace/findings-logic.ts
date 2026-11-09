@@ -133,7 +133,7 @@ export function decisionOf(finding: Finding): Decision {
   if (finding.status === "resolved") return { kind: "resolved", label: "Resolved" };
   if (finding.workflow_status === "acknowledged") return { kind: "acknowledged", label: "Acknowledged" };
   if (finding.workflow_status === "risk_accepted") return { kind: "accepted", label: finding.risk_until ? `Risk accepted until ${shortDate(finding.risk_until)}` : "Risk accepted" };
-  return { kind: "awaiting", label: "Awaiting decision" };
+  return { kind: "awaiting", label: "Not reviewed" };
 }
 
 export const epssPercent = (score: number) => `${(score * 100).toFixed(1)}%`;
@@ -149,7 +149,7 @@ export const BUILTIN_VIEWS: FindingView[] = [
   view("critical-high", "Critical and high", { severities: ["critical", "high"] }),
   view("exploited", "Known exploited", { exploited: true }),
   view("fixable", "Fix available", { fixable: true }),
-  view("awaiting", "Awaiting decision", { decision: "open" }),
+  view("awaiting", "Not reviewed", { decision: "open" }),
   view("decided", "Acknowledged or risk accepted", { decision: "decided" }),
 ];
 
@@ -214,9 +214,9 @@ export const OPTIONAL_COLUMNS = [
   { key: "project", label: "Project" },
   { key: "advisory", label: "Advisory" },
   { key: "fixed", label: "Fixed in" },
-  { key: "signals", label: "Signals" },
+  { key: "signals", label: "Exploit risk" },
   { key: "age", label: "Age" },
-  { key: "decision", label: "Decision" },
+  { key: "decision", label: "Review" },
 ] as const;
 export type ColumnKey = (typeof OPTIONAL_COLUMNS)[number]["key"];
 export const ALL_COLUMNS: ColumnKey[] = OPTIONAL_COLUMNS.map((column) => column.key);
@@ -268,7 +268,7 @@ export function csvCell(value: string | number | boolean | null | undefined): st
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-export const CSV_HEADER = ["Severity", "Package", "Version", "Ecosystem", "Project", "Manifest", "Advisories", "Fixed versions", "EPSS (%)", "Known exploited", "First seen", "Status", "Decision"];
+export const CSV_HEADER = ["Severity", "Package", "Version", "Ecosystem", "Project", "Manifest", "Advisories", "Fixed versions", "EPSS (%)", "Known exploited", "First seen", "Status", "Review"];
 
 export function toCsv(rows: readonly Finding[], names: ProjectNames): string {
   const lines = [CSV_HEADER.map(csvCell).join(",")];

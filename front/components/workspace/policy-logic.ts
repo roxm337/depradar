@@ -94,7 +94,7 @@ export function floorLocks(floor: PolicyRules): FloorLocks {
 export function epssProblem(value: number | null, max: number | null = null): string | null {
   if (value === null) return null;
   if (!Number.isFinite(value) || value < 0 || value > 1) return "Enter a probability between 0 and 1.";
-  if (max !== null && value > max) return `Must be ${max} or lower: the installation policy already requires ${max}.`;
+  if (max !== null && value > max) return `Must be ${max} or lower, because the global policy already requires ${max}.`;
   return null;
 }
 
@@ -109,19 +109,19 @@ export function thresholdText(value: Threshold): string {
   return value === "critical" ? "Critical only" : `${capitalize(value)} and above`;
 }
 
-/** "High and above · KEV · complete coverage": a one-line reading of a rule set. */
+/** "High and above · known exploited · complete coverage": a one-line reading of a rule set. */
 export function summarizeRules(rules: PolicyRules): string {
   const value = normalizeRules(rules);
   const parts: string[] = [];
   if (value.fail_on !== "none") parts.push(thresholdText(value.fail_on));
   if (value.fail_on_unknown) parts.push("unknown severity");
-  if (value.fail_on_kev) parts.push("KEV");
+  if (value.fail_on_kev) parts.push("known exploited");
   if (value.epss_threshold !== null) parts.push(`EPSS ≥ ${value.epss_threshold}`);
   if (value.fail_on_incomplete) parts.push("complete coverage");
-  if (value.require_monitored_manifests) parts.push("every manifest");
-  if (!value.allow_new_only) parts.push("no new-only");
-  if (!value.allow_ignore_acknowledged) parts.push("acknowledged still fail");
-  if (!parts.length) return "No central requirements";
+  if (value.require_monitored_manifests) parts.push("every monitored manifest");
+  if (!value.allow_new_only) parts.push("new-only not allowed");
+  if (!value.allow_ignore_acknowledged) parts.push("acknowledged findings still fail");
+  if (!parts.length) return "No requirements";
   return [capitalize(parts[0]), ...parts.slice(1)].join(" · ");
 }
 
@@ -151,7 +151,7 @@ function ruleValue(key: keyof PolicyRules, rules: PolicyRules): string {
 
 /** What changed between two versions, as "minimum severity: none → high". Null means no override. */
 export function describeChanges(previous: PolicyRules | null, next: PolicyRules | null): string[] {
-  if (!next) return previous ? ["Override removed; the installation policy applies"] : [];
+  if (!next) return previous ? ["Project policy removed; the global policy applies"] : [];
   const before = previous ?? DEFAULT_RULES;
   const changes = (Object.keys(DEFAULT_RULES) as (keyof PolicyRules)[])
     .filter((key) => before[key] !== next[key])
@@ -163,17 +163,20 @@ export function describeChanges(previous: PolicyRules | null, next: PolicyRules 
 export function summarizeGate(policy: GatePolicy): string {
   const parts = [thresholdText(policy.fail_on)];
   if (policy.fail_on_unknown && policy.fail_on !== "none") parts.push("unknown severity");
-  if (policy.fail_on_kev) parts.push("KEV");
+  if (policy.fail_on_kev) parts.push("known exploited");
   if (policy.epss_threshold !== null) parts.push(`EPSS ≥ ${policy.epss_threshold}`);
   if (policy.fail_on_incomplete) parts.push("complete coverage");
-  if (policy.require_monitored_manifests) parts.push("every manifest");
+  if (policy.require_monitored_manifests) parts.push("every monitored manifest");
   parts.push(policy.new_only ? "new findings only" : "all open findings");
   if (policy.ignore_acknowledged) parts.push("acknowledged ignored");
   return parts.join(" · ");
 }
 
+/** Recorded decisions name the global policy by its stored scope, "installation policy v3". */
+export const sourceLabel = (source: string) => source.replace(/^installation policy\b/, "global policy");
+
 export function adjustmentParts(adjustment: PolicyAdjustment) {
-  return { rule: capitalize(ruleLabel(adjustment.rule)), requested: adjustment.requested, enforced: adjustment.enforced, source: adjustment.source };
+  return { rule: capitalize(ruleLabel(adjustment.rule)), requested: adjustment.requested, enforced: adjustment.enforced, source: sourceLabel(adjustment.source) };
 }
 
 // ── Decisions ────────────────────────────────────────────────────────────────
@@ -228,13 +231,13 @@ const EVENTS: Record<string, string> = {
 
 export const eventLabel = (event: string | null | undefined) => (event ? EVENTS[event] ?? capitalize(event.replaceAll("_", " ")) : "—");
 
-/** "Installation v3 · Project v1"; version 0 means the installation never saved a policy. */
+/** "Global v3 · Project v1"; version 0 means the global policy was never saved. */
 export function policyLabel(sources: PolicySource[]): string {
   if (!sources.length) return "Pipeline only";
   return sources
     .slice()
     .sort((a, b) => (a.scope === b.scope ? 0 : a.scope === "installation" ? -1 : 1))
-    .map((source) => (source.scope === "installation" ? (source.version ? `Installation v${source.version}` : "Installation default") : `Project v${source.version}`))
+    .map((source) => (source.scope === "installation" ? (source.version ? `Global v${source.version}` : "Global default") : `Project v${source.version}`))
     .join(" · ");
 }
 
@@ -259,7 +262,7 @@ export function outcomeText(decision: Pick<DecisionSummary, "status" | "violatio
   const parts: string[] = [];
   if (decision.violations) parts.push(plural(decision.violations, "violation"));
   if (decision.missing_manifests) parts.push(`${plural(decision.missing_manifests, "manifest")} missing`);
-  if (!parts.length) parts.push(decision.status === "error" ? "Could not evaluate" : "No violations");
+  if (!parts.length) parts.push(decision.status === "error" ? "Could not be checked" : "No violations");
   return parts.join(" · ");
 }
 

@@ -22,7 +22,7 @@ type Coverage = "none" | "unknown" | "unscanned" | "pending" | "incomplete" | "v
 export function coverageBadge(state: Coverage): { label: string; tone: string } {
   switch (state) {
     case "verified": return { label: "Verified", tone: "tag-ok" };
-    case "incomplete": return { label: "Partial", tone: "tag-warn" };
+    case "incomplete": return { label: "Incomplete", tone: "tag-warn" };
     case "unscanned": return { label: "Not scanned", tone: "" };
     case "pending": return { label: "In progress", tone: "tag-check" };
     case "none": return { label: "No manifests", tone: "" };

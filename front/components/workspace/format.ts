@@ -151,7 +151,7 @@ export function scanTone(scan: Scan | undefined) {
 
 export function scanLabel(scan: Scan) {
   if (scan.status === "succeeded" && !scan.complete) return "Completed with coverage gaps";
-  const labels: Record<string, string> = { queued: "Queued", running: "Scanning", succeeded: "Completed", partial: "Partial coverage", failed: "Failed", superseded: "Superseded" };
+  const labels: Record<string, string> = { queued: "Queued", running: "Scanning", succeeded: "Completed", partial: "Partial coverage", failed: "Failed", superseded: "Replaced by a newer scan" };
   return labels[scan.status] ?? scan.status;
 }
 
@@ -182,9 +182,9 @@ export function inventoryKind(name: string) {
 }
 
 export const tokenPresets: Record<string, { label: string; detail: string; scopes: ApiToken["scopes"] }> = {
-  pipeline: { label: "Default-branch pipeline", detail: "Keeps monitored manifests current and gates changes.", scopes: ["projects:read", "inventories:write", "scans:read", "findings:read"] },
-  checks: { label: "Pull request checks", detail: "Gates pull and merge requests. Cannot change monitored state.", scopes: ["projects:read", "inventories:check", "scans:read", "findings:read"] },
-  onboarding: { label: "Pipeline gate + onboarding", detail: "Also creates missing projects, for agency-wide templates.", scopes: ["projects:read", "projects:write", "inventories:write", "scans:read", "findings:read"] },
+  pipeline: { label: "Default-branch pipeline", detail: "Uploads the default branch’s manifests so DepRadar keeps monitoring them, and checks changes against your policies.", scopes: ["projects:read", "inventories:write", "scans:read", "findings:read"] },
+  checks: { label: "Pull request checks", detail: "Passes or fails pull and merge requests against your policies. Cannot change what DepRadar monitors.", scopes: ["projects:read", "inventories:check", "scans:read", "findings:read"] },
+  onboarding: { label: "Default-branch pipeline + project creation", detail: "Same as the default-branch pipeline, and also creates a project when none exists, for CI templates shared across clients.", scopes: ["projects:read", "projects:write", "inventories:write", "scans:read", "findings:read"] },
   reporting: { label: "Read-only reporting", detail: "Read projects, scans, and findings for dashboards and exports.", scopes: ["projects:read", "scans:read", "findings:read"] },
 };
 
@@ -215,7 +215,7 @@ export function bytes(size: number) {
 
 // People read deliveries by what was sent and what happened, not by internal identifiers.
 const DELIVERY_KIND: Record<string, string> = { alert: "Vulnerability alert", digest: "Daily digest", summary: "Backlog summary", backlog: "Backlog summary", test: "Test message", verification: "Verification code" };
-const DELIVERY_STATUS: Record<string, string> = { accepted: "Accepted", failed: "Failed", cancelled: "Cancelled", bundled: "In a digest", queued: "Queued", sending: "Sending", digest_pending: "Waiting for digest" };
+const DELIVERY_STATUS: Record<string, string> = { accepted: "Sent", failed: "Failed", cancelled: "Cancelled", bundled: "In a digest", queued: "Queued", sending: "Sending", digest_pending: "Waiting for digest" };
 const CHANNEL: Record<string, string> = { email: "Email", telegram: "Telegram" };
 
 export function sentenceCase(value: string) {
@@ -227,9 +227,9 @@ export const deliveryKindLabel = (kind: string) => DELIVERY_KIND[kind] ?? senten
 export const deliveryStatusLabel = (status: string) => DELIVERY_STATUS[status] ?? sentenceCase(status);
 export const channelLabel = (id: string) => CHANNEL[id] ?? sentenceCase(id);
 
-/** "Daily digest delivered", "Test message queued": one line for an activity feed. */
+/** "Daily digest sent", "Test message queued": one line for an activity feed. */
 export function deliveryEvent(kind: string, status: string) {
-  return `${deliveryKindLabel(kind)} ${status === "accepted" ? "delivered" : deliveryStatusLabel(status).toLowerCase()}`;
+  return `${deliveryKindLabel(kind)} ${deliveryStatusLabel(status).toLowerCase()}`;
 }
 
 /** "CI check completed", "Scan failed": the scan's outcome as an activity line. */

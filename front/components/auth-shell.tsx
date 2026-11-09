@@ -15,7 +15,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
     <main className="auth-shell">
       <Brand/>
       <div className="auth-card">{children}</div>
-      <p className="auth-foot">Self-hosted. Your inventories and credentials stay on your server.</p>
+      <p className="auth-foot">Self-hosted. Your manifests and credentials stay on your server.</p>
     </main>
   );
 }
@@ -24,7 +24,7 @@ export function ApiUnavailable({ detail, onRetry, signedIn = false }: { detail: 
   if (signedIn) {
     return (
       <>
-        <div className="auth-heading"><span className="auth-icon warning"><Icon name="server" size={19}/></span><h2>Workspace data didn’t load</h2><p>You are signed in, but loading projects and findings failed{detail ? `: ${detail}` : "."} Nothing is shown rather than an incomplete picture.</p></div>
+        <div className="auth-heading"><span className="auth-icon warning"><Icon name="server" size={19}/></span><h2>Workspace data didn’t load</h2><p>You are signed in, but loading projects and findings failed{detail ? `: ${detail}` : "."} DepRadar shows nothing rather than an incomplete view.</p></div>
         <button className="btn btn-primary auth-submit" onClick={onRetry}><Icon name="refresh" size={16}/>Try again</button>
       </>
     );

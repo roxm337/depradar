@@ -141,7 +141,7 @@ describe("presentation helpers", () => {
   });
 
   test("decisions describe where the finding stands", () => {
-    assert.deepEqual(decisionOf(sample[0]), { kind: "awaiting", label: "Awaiting decision" });
+    assert.deepEqual(decisionOf(sample[0]), { kind: "awaiting", label: "Not reviewed" });
     assert.deepEqual(decisionOf(sample[2]), { kind: "acknowledged", label: "Acknowledged" });
     assert.equal(decisionOf(sample[3]).kind, "accepted");
     assert.match(decisionOf(sample[3]).label, /^Risk accepted until \d{1,2} \w+ 2026$/);
@@ -247,9 +247,9 @@ describe("CSV export", () => {
     const lines = csv.split("\r\n");
     assert.equal(lines.length, 4);
     assert.equal(lines[3], "");
-    assert.equal(lines[0], "Severity,Package,Version,Ecosystem,Project,Manifest,Advisories,Fixed versions,EPSS (%),Known exploited,First seen,Status,Decision");
+    assert.equal(lines[0], "Severity,Package,Version,Ecosystem,Project,Manifest,Advisories,Fixed versions,EPSS (%),Known exploited,First seen,Status,Review");
     assert.ok(lines[1].startsWith("critical,pillow,9.5.0,npm,acme/api,apps/web/package-lock.json,GHSA-j7hp-h8jx-5ppr,10.0.1,71.0,yes,"));
-    assert.ok(lines[1].endsWith(",open,Awaiting decision"));
+    assert.ok(lines[1].endsWith(",open,Not reviewed"));
     assert.match(lines[2], /^low,devise,4\.7\.3,/);
     assert.match(lines[2], /,open,Risk accepted until \d{1,2} \w+ 2026$/);
   });

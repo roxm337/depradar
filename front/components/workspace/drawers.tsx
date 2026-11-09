@@ -28,7 +28,7 @@ function references(evidence: Array<Record<string, unknown>>) {
   return [...links.entries()].slice(0, 12);
 }
 
-const workflowLabel: Record<string, string> = { open: "Awaiting decision", acknowledged: "Acknowledged", risk_accepted: "Risk accepted" };
+const workflowLabel: Record<string, string> = { open: "Not reviewed", acknowledged: "Acknowledged", risk_accepted: "Risk accepted" };
 const workflowTone: Record<string, string> = { open: "", acknowledged: "tag-info", risk_accepted: "tag-info" };
 
 export function FindingDrawer() {
@@ -82,14 +82,14 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
 
         <section className="block">
           <h3 className="block-title">Exploitability</h3>
-          {finding.kev_known && <div className="callout is-danger"><Icon name="target" size={16}/><span><b>Listed in the CISA Known Exploited Vulnerabilities catalog.</b> Attackers have used this vulnerability in the wild; treat it as urgent regardless of severity.</span></div>}
+          {finding.kev_known && <div className="callout is-danger"><Icon name="target" size={16}/><span><b>Listed in CISA’s Known Exploited Vulnerabilities catalog.</b> Attackers have used this vulnerability in real attacks, so treat it as urgent whatever its severity.</span></div>}
           {epss !== null ? (
             <div className="meter">
-              <div className="meter-legend"><span>Probability of exploitation in the next 30 days (EPSS)</span><b className="epss-value">{(epss * 100).toFixed(epss < 0.1 ? 2 : 1)}%</b></div>
+              <div className="meter-legend"><span>Estimated probability of exploitation in the next 30 days (EPSS)</span><b className="epss-value">{(epss * 100).toFixed(epss < 0.1 ? 2 : 1)}%</b></div>
               <div className="meter-track"><i className={epssTone} style={{ width: `${Math.min(100, Math.max(1.5, epss * 100))}%` }}/></div>
               <div className="meter-legend"><span>{percentileLabel(finding.epss_percentile)}</span><span>{finding.intel_updated_at ? `Updated ${relativeTime(now, finding.intel_updated_at)}` : ""}</span></div>
             </div>
-          ) : <p className="muted">No EPSS score is cached for these advisories. EPSS covers CVE identifiers only.</p>}
+          ) : <p className="muted">No EPSS score is available. EPSS only scores vulnerabilities that have a CVE identifier.</p>}
           {finding.cvss_vectors.map((vector) => <code key={vector} className="cvss">{vector}</code>)}
         </section>
 
@@ -101,7 +101,7 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
               <div className="version-list">{finding.fixed_versions.map((version) => <VersionChip key={version} value={version}/>)}</div>
               <p>Select a version to copy it. Fixed versions come from the advisory; DepRadar does not check upgrade compatibility, so run your tests before shipping.</p>
             </div>
-          ) : <div className="fix is-none"><b>No fixed version is published yet</b><p>Watch the advisory, limit exposure of the affected code path, or record a time-boxed risk acceptance.</p></div>}
+          ) : <div className="fix is-none"><b>No fixed version is published yet</b><p>Watch the advisory for a fix, limit use of the affected code, or accept the risk for a limited time.</p></div>}
         </section>
 
         <section className="block">
@@ -124,16 +124,16 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
         </section>
 
         <section className="block">
-          <h3 className="block-title">Decisions and history</h3>
+          <h3 className="block-title">Review history</h3>
           {timeline === null ? <span className="skeleton" style={{ width: "60%" }}/> : <DecisionTimeline events={timeline} now={now}/>}
-          {open && decisions?.length === 0 && <p className="muted">No decision yet. Acknowledge the finding to mute alerts while you work on it.</p>}
+          {open && decisions?.length === 0 && <p className="muted">Not reviewed yet. Acknowledge the finding to stop alerts about it while you work on a fix.</p>}
         </section>
       </div>
       <div className="drawer-foot">
         {!open && <span className="foot-meta">{resolvedByRetirement ? `Resolved when its manifest was retired on ${shortDate(finding.resolved_at)}.` : `Resolved by a complete scan on ${shortDate(finding.resolved_at)}.`}</span>}
         {open && finding.workflow_status === "open" && <button className="btn btn-primary" onClick={() => void actions.acknowledge(finding)}><Icon name="check" size={16}/>Acknowledge</button>}
         {open && finding.workflow_status !== "open" && <button className="btn btn-secondary" onClick={() => void actions.clearDecision(finding)}>{finding.workflow_status === "risk_accepted" ? "Revoke risk acceptance" : "Reopen for review"}</button>}
-        {open && finding.workflow_status !== "risk_accepted" && <button className="btn btn-ghost" onClick={() => workspace.setModal({ kind: "risk", findingId: finding.id })}>Accept risk temporarily…</button>}
+        {open && finding.workflow_status !== "risk_accepted" && <button className="btn btn-ghost" onClick={() => workspace.setModal({ kind: "risk", findingId: finding.id })}>Accept risk temporarily</button>}
       </div>
     </Drawer>
   );
@@ -145,9 +145,9 @@ const tabs: Tab[] = ["overview", "manifests", "scans", "settings"];
 const quietProject: Record<CoverageState, (verified: number, total: number) => string> = {
   verified: () => "The latest complete scan of every monitored manifest found no known vulnerabilities.",
   pending: (verified, total) => `A scan is still running; ${verified} of ${total} manifests are confirmed clear so far.`,
-  incomplete: (verified, total) => `Only ${verified} of ${total} manifests are confirmed clear. A latest scan failed or had coverage gaps; see Scans, then rescan.`,
+  incomplete: (verified, total) => `Only ${verified} of ${total} manifests are confirmed clear. The latest scan of the others failed or could not check every package. Open Scans to see why, then rescan.`,
   unscanned: (verified, total) => `Only ${verified} of ${total} manifests are confirmed clear. The rest have not been scanned yet.`,
-  unknown: () => "Manifest coverage could not be determined from this API version.",
+  unknown: () => "Your DepRadar server runs an older version that cannot report which manifests were scanned.",
   none: () => "Upload a lockfile or connect a pipeline to run the first scan.",
 };
 
@@ -190,8 +190,8 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
       <div className="drawer-head">
         <div className="drawer-top">
           <span className="monogram" aria-hidden="true">{monogram(project.name)}</span>
-          <span className={`tag ${badge.tone}`} title={`${coverage.verified} of ${manifests.length} manifests verified clear`}>{badge.label}</span>
-          <span className={`tag ${project.monitoring_enabled ? "tag-muted" : "tag-warn"}`}>{project.monitoring_enabled ? `Checked ${cadence(project.check_interval_hours)}` : "Monitoring paused"}</span>
+          <span className={`tag ${badge.tone}`} title={`${coverage.verified} of ${manifests.length} manifests confirmed clear by a complete scan`}>{badge.label}</span>
+          <span className={`tag ${project.monitoring_enabled ? "tag-muted" : "tag-warn"}`}>{project.monitoring_enabled ? `Scanned ${cadence(project.check_interval_hours)}` : "Monitoring paused"}</span>
           <button className="icon-btn" onClick={onClose} aria-label="Close project"><Icon name="close"/></button>
         </div>
         <h2 className="drawer-title">{project.name}</h2>
@@ -230,17 +230,17 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
                   <span>Uploaded {relativeTime(now, manifest.created_at)}</span>
                 </span>
                 <span className="manifest-actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => void actions.rescan(manifest.id, manifest.target_path)}><Icon name="refresh" size={14}/>Scan</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => void actions.rescan(manifest.id, manifest.target_path)}><Icon name="refresh" size={14}/>Rescan</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => workspace.setModal({ kind: "retire", projectId: project.id, targetPath: manifest.target_path })} aria-label={`Retire ${manifest.target_path}`}>Retire</button>
                 </span>
               </div>
             );
-          })}</div> : <Empty icon="file" title={retired.length ? "No monitored manifests" : "No manifests yet"} text="Upload a lockfile or SBOM, or let a CI pipeline upload one on every merge."/>}
+          })}</div> : <Empty icon="file" title={retired.length ? "No monitored manifests" : "No manifests yet"} text="Upload a lockfile or SBOM, or let a CI pipeline upload it on every merge."/>}
           <button className="btn btn-secondary" onClick={() => workspace.setModal({ kind: "upload", projectId: project.id })}><Icon name="upload" size={15}/>Upload a manifest</button>
         </section>}
         {tab === "manifests" && retired.length > 0 && <section className="block retired-list">
           <h3 className="block-title">Retired manifests</h3>
-          <div className="list">{retired.map((manifest) => <div key={manifest.id} className="manifest-row is-retired"><span className="manifest-path"><Icon name="file" size={15}/>{manifest.target_path}</span><span className="manifest-meta"><span>Retired {shortDate(manifest.retired_at)}</span><span>Upload it again to resume monitoring</span></span></div>)}</div>
+          <div className="list">{retired.map((manifest) => <div key={manifest.id} className="manifest-row is-retired"><span className="manifest-path"><Icon name="file" size={15}/>{manifest.target_path}</span><span className="manifest-meta"><span>Retired {shortDate(manifest.retired_at)}</span><span>Upload it again to monitor it again</span></span></div>)}</div>
         </section>}
         {tab === "scans" && <section className="block">
           <h3 className="block-title">Scan history{scans.length > 40 && <span className="block-count">Latest 40 of {scans.length}</span>}</h3>
@@ -249,33 +249,33 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
             <tbody>{scans.slice(0, 40).map((scan) => (
               <tr key={scan.id}>
                 <td><div className="cell-main"><span className="status"><i className={`dot ${scanTone(scan)}`}/>{scanLabel(scan)}</span>{(scan.error || scan.coverage_notes.length > 0) && <small className="scan-note">{scan.error ?? scan.coverage_notes.join(" · ")}</small>}</div></td>
-                <td>{scan.mode === "check" ? <span className="tag tag-check">CI check</span> : <span className="tag">Monitor</span>}</td>
+                <td>{scan.mode === "check" ? <span className="tag tag-check" title="A pull request check: it never changes findings or alerts">CI check</span> : <span className="tag" title="A scan of a monitored manifest: it opens and resolves findings">Monitored</span>}</td>
                 <td className="right">{scan.package_count.toLocaleString("en-GB")}</td>
                 <td className="right muted">{scanDuration(scan.created_at, scan.completed_at)}</td>
                 <td className="right muted"><time dateTime={scan.created_at} title={dateTime(scan.created_at)}>{relativeTime(now, scan.created_at)}</time></td>
               </tr>
             ))}</tbody>
-          </table></div> : <Empty icon="clock" title="No scans yet" text="Scans appear here after an upload, a scheduled check, or a pipeline run."/>}
+          </table></div> : <Empty icon="clock" title="No scans yet" text="Scans appear here after an upload, a scheduled scan, or a pipeline run."/>}
         </section>}
         {tab === "settings" && <>
           <section className="block">
             <h3 className="block-title">Monitoring</h3>
             <div className="drawer-card">
-              <div className="toggle-row"><div><b>Scheduled rechecks</b><small>Rechecks the latest manifests against new advisories, even without code changes.</small></div><Switch checked={project.monitoring_enabled} label="Scheduled rechecks" onChange={(enabled) => void actions.setMonitoring(project, enabled, project.check_interval_hours)}/></div>
-              <label className="field"><span className="field-label">Check every</span><select className="select" value={project.check_interval_hours} onChange={(event) => void actions.setMonitoring(project, project.monitoring_enabled, Number(event.target.value))}>{[1, 3, 6, 12, 24, 48, 72, 168].map((hours) => <option key={hours} value={hours}>{capitalize(cadence(hours))}</option>)}</select></label>
-              {project.next_check_at && project.monitoring_enabled && <p className="field-hint">{Date.parse(project.next_check_at) > now ? `Next check ${relativeTime(now, project.next_check_at)}.` : "A check is due and runs on the worker’s next cycle."}</p>}
+              <div className="toggle-row"><div><b>Scheduled scans</b><small>Scans the latest manifests again on a schedule, so newly published vulnerabilities are caught even when the code has not changed.</small></div><Switch checked={project.monitoring_enabled} label="Scheduled scans" onChange={(enabled) => void actions.setMonitoring(project, enabled, project.check_interval_hours)}/></div>
+              <label className="field"><span className="field-label">Scan every</span><select className="select" value={project.check_interval_hours} onChange={(event) => void actions.setMonitoring(project, project.monitoring_enabled, Number(event.target.value))}>{[1, 3, 6, 12, 24, 48, 72, 168].map((hours) => <option key={hours} value={hours}>{capitalize(cadence(hours))}</option>)}</select></label>
+              {project.next_check_at && project.monitoring_enabled && <p className="field-hint">{Date.parse(project.next_check_at) > now ? `Next scan ${relativeTime(now, project.next_check_at)}.` : "A scan is due and starts shortly."}</p>}
             </div>
           </section>
           <section className="block">
             <h3 className="block-title">Alerts</h3>
             <div className="drawer-card">
-              <div className="toggle-row"><div><b>Send alerts for this project</b><small>Email and Telegram deliveries follow the workspace policy unless overridden below.</small></div><Switch checked={project.notifications_enabled} label="Project alerts" onChange={(enabled) => void actions.setAlerts(project, enabled, project.alert_min_severity ?? "inherit")}/></div>
-              <label className="field"><span className="field-label">Immediate alerts from</span><select className="select" value={project.alert_min_severity ?? "inherit"} onChange={(event) => void actions.setAlerts(project, project.notifications_enabled, event.target.value)}><option value="inherit">Workspace policy</option><option value="critical">Critical only</option><option value="high">High and above</option><option value="medium">Medium and above</option><option value="low">Every severity</option></select></label>
+              <div className="toggle-row"><div><b>Send alerts for this project</b><small>Sends email and Telegram alerts for this project, at the level set on the Notifications page unless you choose another below.</small></div><Switch checked={project.notifications_enabled} label="Project alerts" onChange={(enabled) => void actions.setAlerts(project, enabled, project.alert_min_severity ?? "inherit")}/></div>
+              <label className="field"><span className="field-label">Send immediate alerts for</span><select className="select" value={project.alert_min_severity ?? "inherit"} onChange={(event) => void actions.setAlerts(project, project.notifications_enabled, event.target.value)}><option value="inherit">Notifications page setting</option><option value="critical">Critical only</option><option value="high">High and above</option><option value="medium">Medium and above</option><option value="low">Every severity</option></select></label>
             </div>
           </section>
           <section className="block">
             <h3 className="block-title">Danger zone</h3>
-            <div className="danger-zone"><p><b>Delete this project</b>Removes its manifests, scans, findings, decisions, and project tokens. Backups are not changed.</p><button className="btn btn-danger" onClick={() => setConfirming(true)}><Icon name="trash" size={15}/>Delete</button></div>
+            <div className="danger-zone"><p><b>Delete this project</b>Removes its manifests, scans, findings and their reviews, gate decisions, project policy, trusted identities, and the tokens limited to it. Existing backups are not changed.</p><button className="btn btn-danger" onClick={() => setConfirming(true)}><Icon name="trash" size={15}/>Delete</button></div>
           </section>
         </>}
       </div>
@@ -287,8 +287,8 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
       {confirming && (
         <ConfirmDialog title={`Delete ${project.name}?`} description="This cannot be undone." confirmLabel="Delete project" busy={deleting} onClose={() => setConfirming(false)} onConfirm={() => { setDeleting(true); void actions.deleteProject(project).finally(() => setDeleting(false)); }}>
           <ul className="retire-effects">
-            <li>Its {manifests.length} monitored manifest{manifests.length === 1 ? "" : "s"}, scan history, findings, and decisions are removed.</li>
-            <li>Project-scoped CI tokens are revoked.</li>
+            <li>Its {manifests.length} monitored manifest{manifests.length === 1 ? "" : "s"}, scan history, findings and their reviews, gate decisions, and project policy are removed.</li>
+            <li>CI tokens and trusted identities limited to this project stop working.</li>
             <li>Existing backups are not changed, so you can still restore from them.</li>
           </ul>
         </ConfirmDialog>

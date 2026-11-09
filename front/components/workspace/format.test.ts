@@ -133,7 +133,7 @@ describe("workspaceCoverage", () => {
 
 describe("activity labels", () => {
   test("deliveries read as what was sent and what happened", () => {
-    assert.equal(deliveryEvent("digest", "accepted"), "Daily digest delivered");
+    assert.equal(deliveryEvent("digest", "accepted"), "Daily digest sent");
     assert.equal(deliveryEvent("test", "queued"), "Test message queued");
     assert.equal(deliveryEvent("alert", "digest_pending"), "Vulnerability alert waiting for digest");
     assert.equal(deliveryEvent("new_kind", "failed"), "New kind failed");

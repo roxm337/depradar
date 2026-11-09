@@ -61,7 +61,7 @@ export function CommandPalette({ onClose, onShortcuts }: { onClose: () => void; 
       { id: "token", group: "Actions", title: "Create CI/CD token", icon: "key", keywords: "pipeline api access", run: () => workspace.setModal({ kind: "token" }) },
       { id: "assistant-token", group: "Actions", title: "Create AI assistant token", icon: "terminal", keywords: "mcp claude chatgpt cursor ai assistant", run: () => workspace.setModal({ kind: "token", audience: "mcp" }) },
       { id: "identity", group: "Actions", title: "Add trusted CI identity", icon: "lock", keywords: "oidc github gitlab pipeline secretless", run: goSection("/settings", "identities") },
-      { id: "policy", group: "Actions", title: "Edit installation policy", icon: "lock", keywords: "gate minimum enforcement rules severity", run: go("/policies") },
+      { id: "policy", group: "Actions", title: "Edit global policy", icon: "lock", keywords: "gate minimum enforcement rules severity installation", run: go("/policies") },
       { id: "refresh", group: "Actions", title: "Refresh data", icon: "refresh", keywords: "reload sync", run: () => void workspace.actions.refresh() },
       { id: "shortcuts", group: "Actions", title: "Keyboard shortcuts", icon: "keyboard", keywords: "help keys", hint: ["?"], run: onShortcuts },
       { id: "signout", group: "Actions", title: "Sign out", icon: "logout", keywords: "logout", run: () => void workspace.actions.logout() },
