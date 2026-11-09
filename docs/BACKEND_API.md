@@ -138,8 +138,8 @@ never retire anything on their own. Responds with `target_path`, `retired_invent
 
 `GET /api/components?name=lodash` answers which projects use a package, across the current
 monitored manifest of every project (owner session only; API tokens cannot search). Optional
-`ecosystem` (for example `npm` or `PyPI`) and `version` (exact match, as the manifest records it)
-narrow the search. [AI assistant tokens](MCP.md) with `components:read` search through the
+`ecosystem` (for example `npm` or `PyPI`, in any letter case) and `version` (exact match, as the
+manifest records it) narrow the search; a blank value is ignored, and a blank name is refused. [AI assistant tokens](MCP.md) with `components:read` search through the
 `search_packages` MCP tool, limited to their project when restricted. Each match gives the package as the manifest spells it, its version (empty when
 unpinned), project, manifest path, revision, upload time, the scan that indexed it with its
 completeness, and the number of open findings for that package in that manifest. At most 1,000

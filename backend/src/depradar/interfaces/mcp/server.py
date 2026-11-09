@@ -234,9 +234,17 @@ def get_scan(scan_id: Uuid) -> models.ScanItem:
 def search_packages(
     name: Annotated[str, Field(min_length=1, max_length=512, description="Package name.")],
     ecosystem: Annotated[
-        str | None, Field(max_length=100, description="For example npm, PyPI, Packagist.")
+        str | None,
+        Field(
+            max_length=100,
+            description="For example npm, PyPI, Packagist, in any letter case. Leave it out to "
+            "search every ecosystem.",
+        ),
     ] = None,
-    version: Annotated[str | None, Field(max_length=200, description="Exact version.")] = None,
+    version: Annotated[
+        str | None,
+        Field(max_length=200, description="Exact version. Leave it out to match every version."),
+    ] = None,
 ) -> models.PackageSearch:
     """Which projects use a package, and at which version, in current monitored manifests.
     Use it when a package is compromised before any advisory exists."""

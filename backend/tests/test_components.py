@@ -173,6 +173,14 @@ def test_monitor_scan_indexes_every_package_and_search_reports_evidence(
     assert len(search(harness.client, "minimist", ecosystem="npm", version="1.2.5")["matches"]) == 1
     assert search(harness.client, "absent")["matches"] == []
 
+    # Neither another casing of an ecosystem nor a blank filter may read as "not used".
+    assert len(search(harness.client, "minimist", ecosystem="NPM")["matches"]) == 1
+    [found] = search(harness.client, "flask-sqlalchemy", ecosystem="pypi")["matches"]
+    assert found["ecosystem"] == "PyPI"
+    assert len(search(harness.client, "minimist", version="  ")["matches"]) == 1
+    blank = harness.client.get("/api/components", params={"name": "  "})
+    assert blank.status_code == 422, blank.text
+
 
 def test_failed_rescan_keeps_rows_and_unchanged_rescan_reattributes_them(
     harness: Harness, project_id: str
