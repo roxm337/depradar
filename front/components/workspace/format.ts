@@ -57,9 +57,14 @@ export function cadence(hours: number) {
 }
 
 export function accessLabel(scopes: string[]) {
-  const key = [...scopes].sort().join(" ");
-  const preset = [...Object.values(tokenPresets), ...Object.values(assistantPresets)].find((value) => [...value.scopes].sort().join(" ") === key);
-  return preset?.label ?? `${scopes.length} custom scope${scopes.length === 1 ? "" : "s"}`;
+  const sorted = (values: readonly string[]) => [...values].sort().join(" ");
+  const preset = [...Object.values(tokenPresets), ...Object.values(assistantPresets)].find((value) => sorted(value.scopes) === sorted(scopes));
+  if (preset) return preset.label;
+  // An assistant preset plus allowed changes reads as the preset and how many changes it may make.
+  const actions = assistantActions.filter((action) => scopes.includes(action.scope)).map((action) => action.scope as string);
+  const base = Object.values(assistantPresets).find((value) => actions.length && sorted(value.scopes) === sorted(scopes.filter((scope) => !actions.includes(scope))));
+  if (base) return `${base.label} + ${actions.length} change${actions.length === 1 ? "" : "s"}`;
+  return `${scopes.length} custom scope${scopes.length === 1 ? "" : "s"}`;
 }
 
 export function primaryAdvisory(ids: string[]) {
@@ -183,11 +188,21 @@ export const tokenPresets: Record<string, { label: string; detail: string; scope
   reporting: { label: "Read-only reporting", detail: "Read projects, scans, and findings for dashboards and exports.", scopes: ["projects:read", "scans:read", "findings:read"] },
 };
 
-/** Access for AI assistants over MCP. None of it can change findings, alerts, or monitored manifests. */
+/** Base access for AI assistants over MCP. Neither preset can change findings, alerts, or monitored manifests. */
 export const assistantPresets: Record<string, { label: string; detail: string; scopes: ApiToken["scopes"] }> = {
   checks: { label: "Read + lockfile checks", detail: "Reads findings, scans, gate decisions, and package search, and runs check scans on lockfiles you paste.", scopes: ["projects:read", "findings:read", "scans:read", "components:read", "inventories:check"] },
-  reading: { label: "Read only", detail: "Reads findings, scans, gate decisions, and package search.", scopes: ["projects:read", "findings:read", "scans:read", "components:read"] },
+  reading: { label: "Read", detail: "Reads findings, scans, gate decisions, and package search.", scopes: ["projects:read", "findings:read", "scans:read", "components:read"] },
 };
+
+/**
+ * Changes an assistant may be allowed on top of its base access, each off by default. All of them
+ * only increase what DepRadar watches or reports; turning anything off stays with the owner.
+ */
+export const assistantActions: { scope: ApiToken["scopes"][number]; label: string; detail: string; allProjects?: boolean }[] = [
+  { scope: "scans:write", label: "Rescan manifests", detail: "Rescans stored manifests now, as the scheduled check does. Nothing is uploaded." },
+  { scope: "monitoring:tighten", label: "Tighten monitoring and alerts", detail: "Turns monitoring and alerts on, checks more often, or alerts on lower severities. Never turns them off or loosens them." },
+  { scope: "projects:write", label: "Create projects", detail: "New projects start with monitoring off. Needs a token for all projects.", allProjects: true },
+];
 
 export function tokenState(token: ApiToken, now: number) {
   if (token.revoked_at) return "Revoked";

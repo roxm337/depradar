@@ -439,6 +439,11 @@ html[data-density="compact"] .table .cell-main small { display: none; }
 .choice[aria-checked="true"] .radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .choice b { font-size: 13px; font-weight: 600; }
 .choice small { grid-column: 2; color: var(--text-3); font-size: 12.5px; }
+.choice .box { width: 16px; height: 16px; margin-top: 2px; border-radius: var(--radius-sm); border: 1.5px solid var(--line-strong); display: grid; place-items: center; background: var(--surface); color: transparent; }
+.choice .box svg { width: 12px; height: 12px; }
+.choice[role="checkbox"][aria-checked="true"] .box { background: var(--accent); border-color: var(--accent); color: #fff; }
+.choice:disabled { opacity: 0.55; cursor: not-allowed; }
+.choice:disabled:hover { background: var(--surface); }
 .secret { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--radius-lg); background: var(--surface-2); border: 1px solid var(--line); }
 .secret code { font-size: 12.5px; overflow-wrap: anywhere; color: var(--text); }
 .secret small { color: var(--text-3); font-size: 12px; }

@@ -3,9 +3,9 @@
 import { useState, type DragEvent, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { assistantPresets, bytes, inventoryKind, supportedInventory, tokenPresets } from "@/components/workspace/format";
+import { assistantActions, assistantPresets, bytes, inventoryKind, supportedInventory, tokenPresets } from "@/components/workspace/format";
 import { CopyButton, Modal, Pkg, Segmented } from "@/components/workspace/ui";
-import type { CreatedApiToken, TokenAudience } from "@/lib/api";
+import type { ApiToken, CreatedApiToken, TokenAudience } from "@/lib/api";
 
 export function Modals() {
   const { modal, setModal } = useWorkspace();
@@ -232,13 +232,18 @@ function TokenModal({ onClose, audience }: { onClose: () => void; audience: Toke
   const [expiry, setExpiry] = useState(assistant ? "30" : "90");
   const [created, setCreated] = useState<CreatedApiToken | null>(null);
   const [busy, setBusy] = useState(false);
+  // Changes an assistant may make on top of its base access; all start off.
+  const [allowed, setAllowed] = useState<ApiToken["scopes"]>([]);
+  const actionScopes = assistant ? allowed.filter((scope) => !projectId || !assistantActions.find((action) => action.scope === scope)?.allProjects) : [];
+  const scopes = [...presets[preset].scopes, ...actionScopes];
   const restrictedConflict = Boolean(projectId) && presets[preset].scopes.includes("projects:write");
+  const toggle = (scope: ApiToken["scopes"][number]) => setAllowed((current) => current.includes(scope) ? current.filter((value) => value !== scope) : [...current, scope]);
   function finish() { if (created) void reload(); onClose(); }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (restrictedConflict) { notify("error", "Tokens that create projects must cover every project."); return; }
     setBusy(true);
-    setCreated(await actions.createToken({ name: String(new FormData(event.currentTarget).get("name") ?? "").trim(), scopes: presets[preset].scopes, project_id: projectId || null, expires_in_days: Number(expiry), audience }));
+    setCreated(await actions.createToken({ name: String(new FormData(event.currentTarget).get("name") ?? "").trim(), scopes, project_id: projectId || null, expires_in_days: Number(expiry), audience }));
     setBusy(false);
   }
   if (created && assistant) {
@@ -265,11 +270,15 @@ function TokenModal({ onClose, audience }: { onClose: () => void; audience: Toke
     );
   }
   return (
-    <Modal title={assistant ? "New AI assistant token" : "New CI/CD token"} description={assistant ? "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP." : "Pipelines use a token to upload manifests and check changes against your policies."} onClose={onClose} steps={[1, 2]}>
+    <Modal title={assistant ? "New AI assistant token" : "New CI/CD token"} description={assistant ? (actionScopes.length ? "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP and make the changes you allow below." : "Assistants such as Claude or ChatGPT use this token to read DepRadar over MCP.") : "Pipelines use a token to upload manifests and check changes against your policies."} onClose={onClose} steps={[1, 2]}>
       <form onSubmit={submit}>
         <div className="modal-body">
           <label className="field"><span className="field-label">Name</span><input className="input" name="name" required maxLength={100} placeholder={assistant ? "Laptop · Claude Code" : "acme-storefront · GitHub Actions"} autoFocus/></label>
           <div className="field"><span className="field-label">Access</span><div className="choice-list" role="radiogroup" aria-label="Access">{Object.entries(presets).map(([key, value]) => <button key={key} type="button" role="radio" className="choice" aria-checked={preset === key} onClick={() => setPreset(key)}><span className="radio"/><b>{value.label}</b><small>{value.detail}</small></button>)}</div></div>
+          {assistant && <div className="field"><span className="field-label">Also allow</span><div className="choice-list" role="group" aria-label="Also allow">{assistantActions.map((action) => {
+            const unavailable = Boolean(projectId) && action.allProjects;
+            return <button key={action.scope} type="button" role="checkbox" className="choice" aria-checked={actionScopes.includes(action.scope)} disabled={unavailable} onClick={() => toggle(action.scope)}><span className="box"><Icon name="check" size={12}/></span><b>{action.label}</b><small>{unavailable ? "Needs a token for all projects." : action.detail}</small></button>;
+          })}</div><span className="field-hint">These only increase what DepRadar watches and reports. Turning monitoring or alerts off, uploading manifests, and triage stay with you.</span></div>}
           <div className="form-row">
             <label className="field"><span className="field-label">Project</span><select className="select" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">All projects</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <div className="field"><span className="field-label">Expires after</span><select className="select" value={expiry} onChange={(event) => setExpiry(event.target.value)}>{expiries.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
