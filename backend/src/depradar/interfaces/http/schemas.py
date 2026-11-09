@@ -23,6 +23,11 @@ class ProjectInput(BaseModel):
     description: str = Field(default="", max_length=1000)
 
 
+class ProjectRenameInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=120)
+
+
 class Row(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
