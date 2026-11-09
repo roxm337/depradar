@@ -553,7 +553,11 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 # Settings the owner turns on by editing the env file; reconfiguring keeps their value.
-OWNER_SETTINGS = {"DEPRADAR_MCP_ENABLED": "false"}
+OWNER_SETTINGS = {
+    "DEPRADAR_MCP_ENABLED": "false",
+    "DEPRADAR_MCP_RATE_LIMIT_PER_MINUTE": "120",
+    "DEPRADAR_MCP_ALLOWED_ORIGINS": "[]",
+}
 
 
 def apply_configuration(state: dict[str, Any], secrets_in: dict[str, str]) -> None:

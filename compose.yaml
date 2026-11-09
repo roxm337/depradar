@@ -53,6 +53,8 @@ services:
       DEPRADAR_OIDC_AUDIENCE: ${DEPRADAR_OIDC_AUDIENCE:-}
       # AI assistants (MCP) at /api/mcp, off by default; see docs/MCP.md.
       DEPRADAR_MCP_ENABLED: ${DEPRADAR_MCP_ENABLED:-false}
+      DEPRADAR_MCP_RATE_LIMIT_PER_MINUTE: ${DEPRADAR_MCP_RATE_LIMIT_PER_MINUTE:-120}
+      DEPRADAR_MCP_ALLOWED_ORIGINS: ${DEPRADAR_MCP_ALLOWED_ORIGINS:-[]}
     ports:
       # Override with DEPRADAR_API_PORT when another local stack already uses 8000.
       - 127.0.0.1:${DEPRADAR_API_PORT:-8000}:8000

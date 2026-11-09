@@ -161,6 +161,42 @@ class ConfigureTest(unittest.TestCase):
             self.assertEqual(again["DEPRADAR_MCP_ENABLED"], "true")
             self.assertEqual(again["POSTGRES_PASSWORD"], values["POSTGRES_PASSWORD"])
 
+    def test_reconfiguring_keeps_every_owner_setting(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                "CONFIG_DIR": root,
+                "ENV_FILE": root / "depradar.env",
+                "STATE_FILE": root / "install.json",
+                "CADDYFILE": root / "Caddyfile",
+                "PORTS_FILE": root / "compose.ports.yaml",
+            }
+            edited = {
+                "DEPRADAR_MCP_ENABLED": "true",
+                "DEPRADAR_MCP_RATE_LIMIT_PER_MINUTE": "20",
+                "DEPRADAR_MCP_ALLOWED_ORIGINS": '["https://assistant.example.com"]',
+            }
+            self.assertEqual(set(edited), set(ctl.OWNER_SETTINGS))
+            with mock.patch.multiple(ctl, **paths):
+                ctl.apply_configuration(state(), {})
+                values = ctl.read_env(paths["ENV_FILE"])
+                self.assertEqual(
+                    {key: values[key] for key in ctl.OWNER_SETTINGS}, ctl.OWNER_SETTINGS
+                )
+                paths["ENV_FILE"].write_text(ctl.render_env({**values, **edited}))
+                ctl.apply_configuration(state(), {})
+                again = ctl.read_env(paths["ENV_FILE"])
+            self.assertEqual({key: again[key] for key in edited}, edited)
+
+    def test_compose_passes_every_owner_setting_to_the_api(self) -> None:
+        # Compose only hands a container the variables it names, so a setting kept in the env
+        # file but missing from compose.yaml would silently never apply.
+        compose = (ctl.ROOT / "compose.yaml").read_text()
+        for key, default in ctl.OWNER_SETTINGS.items():
+            self.assertIn(f"{key}: ${{{key}:-{default}}}", compose)
+
 
 class PrivateWriteTest(unittest.TestCase):
     def test_files_are_created_owner_only(self) -> None:
