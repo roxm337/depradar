@@ -89,6 +89,8 @@ def test_create_project_starts_unmonitored(mcp: Harness, anonymous: TestClient) 
     created = ok(anonymous, token, "create_project", name="  Globex ", description="New client")
     assert created["name"] == "Globex" and created["monitoring_enabled"] is False
     assert "already exists" in refused(anonymous, token, "create_project", name="Globex")
+    # Refused by the tool itself rather than the use case, and still audited as an error.
+    assert "cannot be blank" in refused(anonymous, token, "create_project", name="   ")
     turned_on = ok(
         anonymous, token, "set_monitoring", project_id=created["id"], enabled=True, interval_hours=6
     )
@@ -99,9 +101,10 @@ def test_create_project_starts_unmonitored(mcp: Harness, anonymous: TestClient) 
             .where(AuditEvent.name == "create_project")
             .order_by(AuditEvent.created_at)
         ).all()
-    assert [(event.outcome, event.project_id) for event in events] == [
-        ("ok", created["id"]),
-        ("error", None),
+    assert [(event.outcome, event.project_id, event.detail) for event in events] == [
+        ("ok", created["id"], ""),
+        ("error", None, "Project name already exists"),
+        ("error", None, "The project name cannot be blank"),
     ]
 
 

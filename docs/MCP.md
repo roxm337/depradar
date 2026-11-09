@@ -222,8 +222,10 @@ Prompts take DepRadar IDs only, and they are listed only to tokens with the scop
   controls those) or from public advisory feeds. They are stripped of control and
   bidirectional-override characters and capped in length. The server instructions and every
   prompt tell the assistant to treat them as data, never as instructions.
-- **Audit:** every tool call is recorded with the token, the assistant's self-reported client
-  name, the tool, the project, the outcome, and the duration. Arguments and results are never
+- **Audit:** every tool call that reaches DepRadar is recorded with the token, the assistant's
+  self-reported client name, the tool, the project, the outcome, and the duration. Calls the
+  MCP layer rejects for malformed arguments, and prompt requests, are not recorded; prompts only
+  return fixed text around an ID and read no data. Arguments and results are never
   recorded; even a hash of a short value such as a package name could be guessed. Settings → **AI
   assistants** shows recent activity, and Settings → **Data retention** sets how long it is kept
   (90 days by default). Activity is included in backups; tokens are not.
