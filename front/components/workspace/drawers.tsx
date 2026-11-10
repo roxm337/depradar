@@ -166,6 +166,9 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
   const [tab, setTab] = useState<Tab>("overview");
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [name, setName] = useState(project.name);
+  const [renaming, setRenaming] = useState(false);
+  const newName = name.trim();
   const open = workspace.findings.filter((finding) => finding.project_id === project.id && finding.status === "open").sort(byPriority);
   const counts = countBySeverity(open);
   const scans = useMemo(() => workspace.scans.filter((scan) => scan.project_id === project.id).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)), [workspace.scans, project.id]);
@@ -258,6 +261,13 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
           </table></div> : <Empty icon="clock" title="No scans yet" text="Scans appear here after an upload, a scheduled scan, or a pipeline run."/>}
         </section>}
         {tab === "settings" && <>
+          <section className="block">
+            <h3 className="block-title">Name</h3>
+            <form className="drawer-card" onSubmit={(event) => { event.preventDefault(); setRenaming(true); void actions.renameProject(project, newName).finally(() => setRenaming(false)); }}>
+              <label className="field"><span className="field-label">Project name</span><span className="rename-row"><input className="input" value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} aria-describedby="project-name-hint"/><button className="btn btn-secondary" disabled={renaming || !newName || newName === project.name}>{renaming && <span className="spinner"/>}Rename</button></span></label>
+              <p className="field-hint" id="project-name-hint">CI pipelines that find this project by name, with <span className="inline-code">--project</span>, <span className="inline-code">DEPRADAR_PROJECT</span>, or the repository name by default, need the new name. Until then they fail, or create a new project if they pass <span className="inline-code">--create-project</span>. Tokens, trusted identities, and pipelines that use the project ID keep working.</p>
+            </form>
+          </section>
           <section className="block">
             <h3 className="block-title">Monitoring</h3>
             <div className="drawer-card">

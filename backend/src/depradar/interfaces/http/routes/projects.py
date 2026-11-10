@@ -28,6 +28,7 @@ from depradar.interfaces.http.schemas import (
     ProjectNotificationInput,
     ProjectNotificationOutput,
     ProjectOutput,
+    ProjectRenameInput,
     RetireTargetInput,
     RetireTargetOutput,
     ScanOutput,
@@ -129,6 +130,11 @@ def findings(
 @owner.delete("/projects/{project_id}", status_code=204)
 def remove_project(project_id: UUID, db: Db, settings: Config) -> None:
     projects.delete_project(db, str(project_id), settings.dashboard_url)
+
+
+@owner.patch("/projects/{project_id}", response_model=ProjectOutput)
+def rename_project(project_id: UUID, body: ProjectRenameInput, db: Db) -> Project:
+    return projects.rename_project(db, str(project_id), body.name)
 
 
 @owner.put("/projects/{project_id}/monitoring")

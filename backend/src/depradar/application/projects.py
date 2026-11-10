@@ -48,6 +48,21 @@ def create_project(db: Session, principal: Principal, name: str, description: st
     return project
 
 
+def rename_project(db: Session, project_id: str, name: str) -> Project:
+    """Give a project a new name; its ID, and everything bound to the ID, stay the same.
+
+    Pipelines that find the project by name need the new name, since lookups match it exactly.
+    """
+    project = get_project(db, project_id)
+    project.name = name
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise Conflict("Project name already exists") from exc
+    return project
+
+
 def list_projects(
     db: Session, principal: Principal, limit: int, offset: int, name: str | None = None
 ) -> list[Project]:

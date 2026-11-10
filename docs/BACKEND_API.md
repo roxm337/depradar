@@ -107,6 +107,14 @@ project's `enabled` alert setting, so disabling a project also drops its queued 
 apply to digests at send time as well, including retries. Deleting a project removes its alerts
 from unsent digests, which still deliver the other projects' alerts; sent digests are not replayed.
 
+## Renaming a project
+
+`PATCH /api/projects/{id}`, body `{"name":"acme/storefront"}`, renames a project and returns it.
+Names are trimmed, 1–120 characters, and unique: a name another project uses returns 409. The ID
+stays the same, so tokens, trusted identities, findings, and history are unaffected. Pipelines that
+find the project by name (`--project`, `DEPRADAR_PROJECT`, or the repository name by default) need
+the new name; until then they fail, or create a new project if they pass `--create-project`.
+
 ## Scheduled vulnerability monitoring
 
 `PUT /api/projects/{id}/monitoring`, body `{"enabled":true,"interval_hours":24}` enables checks
