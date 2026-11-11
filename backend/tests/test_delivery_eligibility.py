@@ -18,7 +18,7 @@ from depradar.domain.messages import Message
 
 from .conftest import Harness
 from .test_notifications import connect, due
-from .test_scans import report
+from .test_scans import enqueue_recheck, report
 from .test_uploads import upload
 
 
@@ -34,7 +34,9 @@ def digest_policy(harness: Harness, *, details: bool = True) -> None:
 def scan_project(harness: Harness, name: str) -> str:
     response = harness.client.post("/api/projects", json={"name": name}, headers=harness.headers)
     project_id = str(response.json()["id"])
-    assert upload(harness, project_id).status_code == 202
+    inventory_id = upload(harness, project_id).json()["inventory"]["id"]
+    run_once(harness.factory, harness.settings, harness.store, lambda *_: report(False))
+    enqueue_recheck(harness, inventory_id)
     run_once(harness.factory, harness.settings, harness.store, lambda *_: report())
     return project_id
 
@@ -127,7 +129,9 @@ def test_disabling_project_alerts_cancels_queued_immediate_alerts(
     harness: Harness, project_id: str
 ) -> None:
     connect(harness)
-    upload(harness, project_id)
+    inventory_id = upload(harness, project_id).json()["inventory"]["id"]
+    run_once(harness.factory, harness.settings, harness.store, lambda *_: report(False))
+    enqueue_recheck(harness, inventory_id)
     run_once(harness.factory, harness.settings, harness.store, lambda *_: report())
     tick(harness.factory, harness.settings, harness.store)
     with harness.factory() as db:
@@ -170,7 +174,9 @@ def test_disabled_project_alerts_are_dropped_when_the_digest_is_prepared(
 ) -> None:
     connect(harness)
     digest_policy(harness)
-    upload(harness, project_id)
+    inventory_id = upload(harness, project_id).json()["inventory"]["id"]
+    run_once(harness.factory, harness.settings, harness.store, lambda *_: report(False))
+    enqueue_recheck(harness, inventory_id)
     run_once(harness.factory, harness.settings, harness.store, lambda *_: report())
     tick(harness.factory, harness.settings, harness.store)
     harness.client.put(
@@ -191,7 +197,9 @@ def test_disabled_project_alerts_are_dropped_when_the_digest_is_prepared(
 def test_prepared_digest_waits_for_quiet_hours_to_end(harness: Harness, project_id: str) -> None:
     connect(harness)
     digest_policy(harness)
-    upload(harness, project_id)
+    inventory_id = upload(harness, project_id).json()["inventory"]["id"]
+    run_once(harness.factory, harness.settings, harness.store, lambda *_: report(False))
+    enqueue_recheck(harness, inventory_id)
     run_once(harness.factory, harness.settings, harness.store, lambda *_: report())
     tick(harness.factory, harness.settings, harness.store)
     digest_id = prepare_digest_now(harness)

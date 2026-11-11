@@ -19,7 +19,9 @@ from depradar.domain.entities import (
 from depradar.domain.security import Principal
 
 
-def record_change(db: Session, finding: Finding, scan: Scan, kind: str) -> None:
+def record_change(
+    db: Session, finding: Finding, scan: Scan, kind: str, *, initial_scan: bool = False
+) -> None:
     event = ChangeEvent(finding_id=finding.id, scan_id=scan.id, kind=kind)
     db.add(event)
     db.flush()
@@ -31,6 +33,11 @@ def record_change(db: Session, finding: Finding, scan: Scan, kind: str) -> None:
                 "project_id": finding.project_id,
                 "scan_id": scan.id,
                 "kind": kind,
+                **(
+                    {"initial_scan": "complete" if scan.complete else "partial"}
+                    if initial_scan
+                    else {}
+                ),
             },
         )
     )

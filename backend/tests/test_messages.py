@@ -10,6 +10,7 @@ from depradar.domain.messages import (
     Item,
     alert_message,
     digest_message,
+    initial_scan_message,
     plain,
     verification_message,
 )
@@ -81,7 +82,11 @@ def test_telegram_button_only_for_addresses_telegram_can_open() -> None:
 
 
 def test_generic_messages_hide_project_package_and_advisory() -> None:
-    for message in (alert_message(ITEM, False), digest_message([ITEM], False)):
+    for message in (
+        alert_message(ITEM, False),
+        digest_message([ITEM], False),
+        initial_scan_message([ITEM], False, False),
+    ):
         outputs = [message.subject, plain(message, URL), email_text(message, URL)]
         outputs += [email_html(message, URL), telegram_html(message, URL)[0]]
         for output in outputs:
@@ -104,8 +109,9 @@ def test_email_is_escaped_self_contained_and_under_gmail_clipping() -> None:
 
 def test_telegram_lists_stay_within_the_message_limit() -> None:
     items = [replace(ITEM, package="p" * 200 + str(n)) for n in range(20)]
-    text, _ = telegram_html(digest_message(items, True), URL)
-    assert visible_length(text) <= 4000 and "more in DepRadar." in text
+    for message in (digest_message(items, True), initial_scan_message(items, True, False)):
+        text, _ = telegram_html(message, URL)
+        assert visible_length(text) <= 4000 and "more in DepRadar." in text
 
 
 def test_rejected_telegram_formatting_is_resent_as_plain_text(monkeypatch) -> None:

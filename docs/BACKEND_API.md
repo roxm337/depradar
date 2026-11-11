@@ -77,6 +77,14 @@ osv.dev.
 
 ## Routing and digests
 
+The first applied monitoring scan of each project and manifest path sends one `initial_scan`
+report per enabled, verified channel, covering all severities instead of individual alerts or
+daily digest entries. Clean scans send nothing but still establish the baseline. Partial scans
+establish it too and label their report incomplete; failed, superseded, and check-mode scans do
+not. Reuploads of the same path use the normal alert rules below. Reports honor quiet hours,
+project notification settings, and detail privacy settings. Large reports show severity totals,
+a bounded list, and an overflow count linking to the dashboard.
+
 `GET`/`PUT /api/notifications/policy`:
 
 ```json

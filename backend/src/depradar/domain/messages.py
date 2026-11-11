@@ -4,7 +4,7 @@ Composition decides what a message may reveal; channel adapters only format it.
 """
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import quote
 
 from depradar.domain.entities import Finding, NotificationPolicy
@@ -182,6 +182,20 @@ def digest_message(items: list[Item], details: bool) -> Message:
         more=max(len(ordered) - LIST_LIMIT, 0) if details else 0,
         counts=tally(ordered),
         action=("Review findings", "/findings"),
+    )
+
+
+def initial_scan_message(items: list[Item], details: bool, complete: bool) -> Message:
+    message = digest_message(items, details)
+    title = f"Initial scan: {plural(len(items), 'finding')}"
+    return replace(
+        message,
+        kind="initial_scan",
+        subject=title + (f" · {items[0].project}" if details and items else ""),
+        title=title,
+        lead="Findings from the first scan of this manifest, most severe first."
+        + ("" if details else f" {GENERIC}"),
+        note="" if complete else "This scan is incomplete; additional findings may exist.",
     )
 
 
