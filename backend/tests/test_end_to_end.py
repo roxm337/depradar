@@ -126,7 +126,7 @@ def test_postgres_osv_smtp_telegram_scheduling_decisions_backup_and_delete(
     # Details are off by default, so neither channel may name the package.
     assert sent and all(m["parse_mode"] == "HTML" for m in sent)
     assert not any("minimist" in m["text"] for m in sent)
-    assert any(m["Subject"].endswith("vulnerability in a monitored project") for m in inbox)
+    assert any(m["Subject"].startswith("Initial scan:") for m in inbox)
     assert (
         harness.client.post(
             f"/api/findings/{finding['id']}/acknowledge",

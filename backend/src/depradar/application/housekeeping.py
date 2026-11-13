@@ -145,6 +145,21 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
     # Search reads only each manifest's current snapshot, so older and retired snapshots drop
     # their package lists now, even when their scans and inventory stay as audit evidence.
     current = {inventory.id for inventory in current_snapshots(db)}
+    # Keep one applied scan per manifest, including clean scans, to remember its baseline.
+    baselines: dict[tuple[str, str], Scan] = {}
+    for scan, path in db.execute(
+        select(Scan, Inventory.target_path)
+        .join(Inventory)
+        .where(
+            Scan.mode == "monitor",
+            Scan.status.in_(["succeeded", "partial"]),
+            Inventory.retired_at.is_(None),
+        )
+        .order_by(Scan.completed_at.desc(), Scan.id.desc())
+    ):
+        baselines.setdefault((scan.project_id, path), scan)
+    baseline_scans = {scan.id for scan in baselines.values()}
+    baseline_inventories = {scan.inventory_id for scan in baselines.values()}
     indexed = set(db.scalars(select(distinct(ComponentOccurrence.inventory_id))))
     for inventory_id in indexed - current:
         db.execute(
@@ -156,7 +171,11 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
         if scan.inventory_id not in latest:
             latest.add(scan.inventory_id)
             continue
-        if scan.created_at >= scan_cutoff or scan.status in {"queued", "running"}:
+        if (
+            scan.created_at >= scan_cutoff
+            or scan.status in {"queued", "running"}
+            or scan.id in baseline_scans
+        ):
             continue
         if db.scalar(select(ChangeEvent.id).where(ChangeEvent.scan_id == scan.id).limit(1)):
             continue
@@ -181,6 +200,8 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
             if inventory.retired_at is None:
                 continue
         if inventory.created_at >= scan_cutoff:
+            continue
+        if inventory.id in baseline_inventories:
             continue
         scans = list(db.scalars(select(Scan).where(Scan.inventory_id == inventory.id)))
         if any(

@@ -191,6 +191,21 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
     if latest is None or latest.id != inventory.id or newer_scan or inventory.retired_at:
         scan.status = "superseded"
         return
+    initial_scan = (
+        db.scalar(
+            select(Scan.id)
+            .join(Inventory)
+            .where(
+                Scan.project_id == scan.project_id,
+                Inventory.target_path == inventory.target_path,
+                Scan.mode == "monitor",
+                Scan.id != scan.id,
+                Scan.status.in_(["succeeded", "partial"]),
+            )
+            .limit(1)
+        )
+        is None
+    )
     index_components(db, scan, inventory, response.report)
     existing = list(
         db.scalars(
@@ -279,7 +294,7 @@ def apply_report(db: Session, scan: Scan, inventory: Inventory, response: ScanRe
         db.add(Observation(scan_id=scan.id, finding_id=finding.id, evidence=detected.evidence))
         snapshot.append({"finding_id": finding.id, **detected.model_dump(exclude={"evidence"})})
         if kind:
-            record_change(db, finding, scan, kind)
+            record_change(db, finding, scan, kind, initial_scan=initial_scan)
     scan.results = snapshot
     if scan.complete:
         for finding in existing:

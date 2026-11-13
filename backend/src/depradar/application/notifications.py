@@ -29,6 +29,7 @@ from depradar.domain.messages import (
     alert_message,
     connector_test_message,
     digest_message,
+    initial_scan_message,
     item_from,
     plain,
     severity_of,
@@ -136,9 +137,15 @@ def compose(
         return connector_test_message(connector.id, policy)
     if delivery.kind == "summary":
         return open_summary(db, connector)
-    if delivery.kind == "digest":
+    if delivery.kind in {"digest", "initial_scan"}:
         sources = [source(db, child) for child in children]
         items = [entry(db, found, change.kind) for change, found in sources if change and found]
+        if delivery.kind == "initial_scan":
+            event = db.get(OutboxEvent, children[0].outbox_id)
+            assert event is not None
+            return initial_scan_message(
+                items, details, event.payload.get("initial_scan") == "complete"
+            )
         return digest_message(items, details)
     change, finding = source(db, delivery)
     if change and finding:
@@ -173,6 +180,20 @@ def route_outbox(db: Session, settings: Settings) -> int:
             .limit(500)
         )
     )
+    # Route an initial scan atomically, even when it exceeds the normal batch limit.
+    initial_ids = {event.payload["scan_id"] for event in events if "initial_scan" in event.payload}
+    if initial_ids:
+        selected = {event.id for event in events}
+        events += [
+            event
+            for event in db.scalars(
+                select(OutboxEvent)
+                .join(ChangeEvent, ChangeEvent.id == OutboxEvent.change_id)
+                .where(OutboxEvent.processed_at.is_(None), ChangeEvent.scan_id.in_(initial_ids))
+            )
+            if event.id not in selected
+        ]
+    batches: dict[tuple[str, str], list[Delivery]] = {}
     levels = ["unknown", "low", "medium", "high", "critical"]
     for event in events:
         change = db.get(ChangeEvent, event.change_id)
@@ -215,19 +236,32 @@ def route_outbox(db: Session, settings: Settings) -> int:
                         if connector.verified_at and connector.verified_at > event.created_at:
                             continue
                         available_at = quiet_end_at(utcnow(), policy)
-                        db.add(
-                            Delivery(
-                                connector_id=connector.id,
-                                generation=connector.generation,
-                                outbox_id=event.id,
-                                project_id=finding.project_id,
-                                status="queued" if immediate else "digest_pending",
-                                available_at=available_at if immediate else utcnow(),
-                                subject=message.subject[:200],
-                                body=body,
-                            )
+                        initial = "initial_scan" in event.payload
+                        delivery = Delivery(
+                            connector_id=connector.id,
+                            generation=connector.generation,
+                            outbox_id=event.id,
+                            project_id=finding.project_id,
+                            status="bundled"
+                            if initial
+                            else ("queued" if immediate else "digest_pending"),
+                            available_at=available_at if immediate else utcnow(),
+                            subject=message.subject[:200],
+                            body=body,
                         )
+                        db.add(delivery)
+                        if initial:
+                            batches.setdefault((change.scan_id, connector.id), []).append(delivery)
         event.processed_at = utcnow()
+    for (_, connector_id), children in batches.items():
+        destination = db.get(Connector, connector_id)
+        assert destination is not None
+        message = compose(db, Delivery(kind="initial_scan"), destination, policy, children)
+        parent = queue_message(db, destination, message, settings, quiet_end_at(utcnow(), policy))
+        parent.project_id = children[0].project_id
+        db.flush()
+        for child in children:
+            child.batch_id = parent.id
     return len(events)
 
 
@@ -337,7 +371,7 @@ def deliver_once(
                 delivery.available_at = allowed_at
                 return True
         active: list[Delivery] = []
-        if delivery.kind == "digest":
+        if delivery.kind in {"digest", "initial_scan"}:
             for child in db.scalars(select(Delivery).where(Delivery.batch_id == delivery.id)):
                 if suppressed(db, child):
                     child.status = "cancelled"
