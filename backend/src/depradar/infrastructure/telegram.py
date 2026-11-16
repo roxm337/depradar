@@ -90,7 +90,7 @@ def render_telegram(message: Message, base_url: str) -> tuple[str, dict[str, Any
         lines += ["", *(f"<b>{label}:</b> {value}" for label, value in details(item, TELEGRAM))]
         lines += ["", f"<blockquote>{tg(item.summary)}</blockquote>"] if item.summary else []
     else:
-        for project, items in groups(message.items):
+        for project, items in groups(message):
             lines += ["", f"<b>{tg(project)}</b>"]
             for item in items:
                 parts = [f"<b>{tg(item.package)}</b> <code>{tg(item.version)}</code>"]

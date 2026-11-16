@@ -191,7 +191,7 @@ def initial_scan_message(items: list[Item], details: bool, complete: bool) -> Me
     return replace(
         message,
         kind="initial_scan",
-        subject=title + (f" · {items[0].project}" if details and items else ""),
+        subject=title + (f" · Project: {items[0].project}" if details and items else ""),
         title=title,
         lead="Findings from the first scan of this manifest, most severe first."
         + ("" if details else f" {GENERIC}"),
@@ -341,10 +341,11 @@ def details(item: Item, style: Style) -> list[tuple[str, str]]:
     return rows
 
 
-def groups(items: Iterable[Item]) -> list[tuple[str, list[Item]]]:
+def groups(message: Message) -> list[tuple[str, list[Item]]]:
     grouped: dict[str, list[Item]] = {}
-    for item in items:
-        grouped.setdefault(item.project, []).append(item)
+    for item in message.items:
+        project = f"Project: {item.project}" if message.kind == "initial_scan" else item.project
+        grouped.setdefault(project, []).append(item)
     return list(grouped.items())
 
 
@@ -373,7 +374,7 @@ def plain(message: Message, base_url: str) -> str:
         lines += ["", *(f"{label}: {value}" for label, value in details(item, PLAIN))]
         lines += ["", item.summary] if item.summary else []
     else:
-        for project, items in groups(message.items):
+        for project, items in groups(message):
             lines += ["", project]
             for item in items:
                 parts = [f"{item.package} {item.version}", *row_parts(item, PLAIN)]

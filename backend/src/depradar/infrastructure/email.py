@@ -166,9 +166,9 @@ def email_row(item: Item) -> str:
     )
 
 
-def email_list(items: tuple[Item, ...]) -> str:
+def email_list(message: Message) -> str:
     blocks = []
-    for project, rows in groups(items):
+    for project, rows in groups(message):
         heading = (
             f'<tr><td class="dr-ink" style="padding:0 0 8px;{font(13, 18, 600, INK)}">'
             f'{esc(project)} <span class="dr-ink3" style="font-weight:400;color:{INK_3};">'
@@ -218,7 +218,7 @@ def email_body(message: Message, base_url: str) -> str:
                 )
             )
     elif message.items:
-        parts.append(email_list(message.items))
+        parts.append(email_list(message))
     if message.more:
         parts.append(
             f'<p class="dr-ink3" style="margin:16px 0 0;{font(13, 20, 400, INK_3)}">'

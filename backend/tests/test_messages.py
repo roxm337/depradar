@@ -107,6 +107,15 @@ def test_email_is_escaped_self_contained_and_under_gmail_clipping() -> None:
     assert digest.subject == "Daily digest: 40 vulnerability updates across 4 projects"
 
 
+def test_initial_scan_labels_the_project_in_both_channels() -> None:
+    message = initial_scan_message([ITEM], True, True)
+    assert message.subject == "Initial scan: 1 finding · Project: Acme <Shop> & Co"
+    assert f"Project: {ITEM.project}" in email_text(message, URL)
+    outputs = [email_html(message, URL), telegram_html(message, URL)[0]]
+    for output in outputs:
+        assert f"Project: {ITEM.project}" in "".join(Parsed(output).text)
+
+
 def test_telegram_lists_stay_within_the_message_limit() -> None:
     items = [replace(ITEM, package="p" * 200 + str(n)) for n in range(20)]
     for message in (digest_message(items, True), initial_scan_message(items, True, False)):
