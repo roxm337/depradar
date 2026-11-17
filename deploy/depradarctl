@@ -1542,7 +1542,19 @@ def make_backup(label: str = "") -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(BACKUP_DIR, 0o700)
     with ui.task("Creating a verified backup") as task:
-        _, out = compose("exec", "-T", "api", "depradar", "backup", inside, task=task, capture=True)
+        # The restore drill stages and copies inventories; /tmp is a 32 MiB tmpfs.
+        _, out = compose(
+            "exec",
+            "-T",
+            "-e",
+            "TMPDIR=/data/backups",
+            "api",
+            "depradar",
+            "backup",
+            inside,
+            task=task,
+            capture=True,
+        )
         verified = '"verified": true' in out
         compose("cp", f"api:{inside}", str(BACKUP_DIR / name), task=task)
         compose("exec", "-T", "api", "rm", "-f", inside, check=False)
@@ -1615,6 +1627,8 @@ def cmd_restore(args: argparse.Namespace) -> None:
                 "run",
                 "--rm",
                 "--no-deps",
+                "-e",
+                "TMPDIR=/data/backups",
                 "-v",
                 f"{staged}:/restore/backup.tar.gz:ro",
                 "api",
