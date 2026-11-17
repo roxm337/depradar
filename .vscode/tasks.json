@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "DepRadar: start backend",
+			"type": "shell",
+			"command": "docker compose up --build -d --wait",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "DepRadar: dashboard on 3100",
+			"type": "shell",
+			"command": "cd front && pnpm dev -p 3100",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

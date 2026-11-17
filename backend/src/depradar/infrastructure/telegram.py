@@ -65,6 +65,11 @@ def linkable(url: str) -> bool:
     return False
 
 
+def folded(lines: list[str]) -> str:
+    """Telegram shows the first lines of an expandable quote and folds the rest behind a tap."""
+    return "<blockquote expandable>" + "\n".join(lines) + "</blockquote>"
+
+
 def visible_length(text: str) -> int:
     # Telegram counts UTF-16 code units after removing markup.
     return len(html.unescape(re.sub(r"<[^>]+>", "", text)).encode("utf-16-le")) // 2
@@ -88,16 +93,17 @@ def render_telegram(message: Message, base_url: str) -> tuple[str, dict[str, Any
     if message.kind == "alert" and message.items:
         item = message.items[0]
         lines += ["", *(f"<b>{label}:</b> {value}" for label, value in details(item, TELEGRAM))]
-        lines += ["", f"<blockquote>{tg(item.summary)}</blockquote>"] if item.summary else []
+        lines += ["", folded([tg(item.summary)])] if item.summary else []
     else:
-        for project, items in groups(message.items):
-            lines += ["", f"<b>{tg(project)}</b>"]
+        for project, items in groups(message):
+            rows = []
             for item in items:
                 parts = [f"<b>{tg(item.package)}</b> <code>{tg(item.version)}</code>"]
                 parts += row_parts(item, TELEGRAM)
                 parts += [f"<i>{tg(change_label(item))}</i>"] if item.change else []
                 mark = EMOJI["resolved" if item.change == "resolved" else item.severity]
-                lines.append(f"{mark} " + " · ".join(parts))
+                rows.append(f"{mark} " + " · ".join(parts))
+            lines += ["", f"<b>{tg(project)}</b>", folded(rows)]
     lines += ["", f"<i>…and {message.more} more in DepRadar.</i>"] if message.more else []
     if message.facts:
         lines += ["", *(f"<b>{tg(label)}:</b> {tg(value)}" for label, value in message.facts)]

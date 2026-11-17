@@ -107,6 +107,28 @@ def test_email_is_escaped_self_contained_and_under_gmail_clipping() -> None:
     assert digest.subject == "Daily digest: 40 vulnerability updates across 4 projects"
 
 
+def test_telegram_folds_alert_summary_and_each_project_list() -> None:
+    alert, _ = telegram_html(alert_message(ITEM, True), URL)
+    assert alert.count("<blockquote expandable>") == 1
+    assert "<blockquote expandable>Prototype pollution" in alert
+    items = [replace(ITEM, project=f"Client {n % 3}", package=f"pkg-{n}") for n in range(9)]
+    for message in (digest_message(items, True), initial_scan_message(items, True, True)):
+        text, _ = telegram_html(message, URL)
+        assert text.count("<blockquote expandable>") == text.count("</blockquote>") == 3
+        # Project names stay outside the folds, so a collapsed list still says whose it is.
+        label = "Project: Client 0" if message.kind == "initial_scan" else "Client 0"
+        assert f"<b>{label}</b>\n<blockquote expandable>" in text
+
+
+def test_initial_scan_labels_the_project_in_both_channels() -> None:
+    message = initial_scan_message([ITEM], True, True)
+    assert message.subject == "Initial scan: 1 finding · Project: Acme <Shop> & Co"
+    assert f"Project: {ITEM.project}" in email_text(message, URL)
+    outputs = [email_html(message, URL), telegram_html(message, URL)[0]]
+    for output in outputs:
+        assert f"Project: {ITEM.project}" in "".join(Parsed(output).text)
+
+
 def test_telegram_lists_stay_within_the_message_limit() -> None:
     items = [replace(ITEM, package="p" * 200 + str(n)) for n in range(20)]
     for message in (digest_message(items, True), initial_scan_message(items, True, False)):

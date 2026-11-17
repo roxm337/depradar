@@ -98,4 +98,5 @@ async function proxy(request: NextRequest, context: RouteContext<"/api/backend/[
 export const GET = proxy satisfies (request: NextRequest, context: RouteContext<"/api/backend/[...path]">) => Promise<Response>;
 export const POST = proxy satisfies (request: NextRequest, context: RouteContext<"/api/backend/[...path]">) => Promise<Response>;
 export const PUT = proxy satisfies (request: NextRequest, context: RouteContext<"/api/backend/[...path]">) => Promise<Response>;
+export const PATCH = proxy satisfies (request: NextRequest, context: RouteContext<"/api/backend/[...path]">) => Promise<Response>;
 export const DELETE = proxy satisfies (request: NextRequest, context: RouteContext<"/api/backend/[...path]">) => Promise<Response>;
