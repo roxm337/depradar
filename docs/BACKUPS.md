@@ -12,7 +12,7 @@ they are created with owner-only file permissions and must be stored privately.
 In Docker Compose:
 
 ```sh
-docker compose exec api depradar backup /data/backups/depradar-backup.tar.gz
+docker compose exec -e TMPDIR=/data/backups api depradar backup /data/backups/depradar-backup.tar.gz
 docker compose cp api:/data/backups/depradar-backup.tar.gz ./depradar-backup.tar.gz
 ```
 
@@ -27,6 +27,12 @@ The command briefly blocks application writes while copying consistent database 
 files. It then creates a randomly named verification schema in PostgreSQL, applies migrations,
 restores the archive, and compares row counts and file hashes. The verification schema is removed
 afterward; normal application schemas are not dropped. The database role needs schema-creation rights.
+
+The API container's `/tmp` is a 32 MiB tmpfs. Backup and restore commands should use
+`TMPDIR=/data/backups` so extracted files use the disk-backed backup volume. `depradarctl`
+sets this automatically. Allow space for the archive, its extracted database snapshot, and
+two copies of its inventory files during verification. An `Errno 28` during the drill can
+mean `/tmp` filled even when the VPS disk has free space.
 
 Success prints `"verified": true`. A failed drill exits nonzero and leaves an **unverified** archive
 for investigation. An archive merely existing is not proof of a successful backup. Re-run the drill:
