@@ -279,7 +279,7 @@ function ProjectPanel({ project, onClose }: { project: Project; onClose: () => v
           <section className="block">
             <h3 className="block-title">Alerts</h3>
             <div className="drawer-card">
-              <div className="toggle-row"><div><b>Send alerts for this project</b><small>Sends email and Telegram alerts for this project, at the level set on the Notifications page unless you choose another below.</small></div><Switch checked={project.notifications_enabled} label="Project alerts" onChange={(enabled) => void actions.setAlerts(project, enabled, project.alert_min_severity ?? "inherit")}/></div>
+              <div className="toggle-row"><div><b>Send alerts for this project</b><small>Sends this project’s alerts to the email address and Telegram chats that cover it, at the level set on the Notifications page unless you choose another below.</small></div><Switch checked={project.notifications_enabled} label="Project alerts" onChange={(enabled) => void actions.setAlerts(project, enabled, project.alert_min_severity ?? "inherit")}/></div>
               <label className="field"><span className="field-label">Send immediate alerts for</span><select className="select" value={project.alert_min_severity ?? "inherit"} onChange={(event) => void actions.setAlerts(project, project.notifications_enabled, event.target.value)}><option value="inherit">Notifications page setting</option><option value="critical">Critical only</option><option value="high">High and above</option><option value="medium">Medium and above</option><option value="low">Every severity</option></select></label>
             </div>
           </section>

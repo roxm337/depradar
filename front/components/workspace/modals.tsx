@@ -3,7 +3,7 @@
 import { useState, type DragEvent, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { assistantActions, assistantPresets, bytes, inventoryKind, supportedInventory, tokenPresets } from "@/components/workspace/format";
+import { assistantActions, assistantPresets, bytes, connectorName, inventoryKind, supportedInventory, tokenPresets } from "@/components/workspace/format";
 import { CopyButton, Modal, Pkg, Segmented } from "@/components/workspace/ui";
 import type { ApiToken, CreatedApiToken, TokenAudience } from "@/lib/api";
 
@@ -15,7 +15,9 @@ export function Modals() {
   if (modal.kind === "upload") return <UploadModal onClose={close} initialProject={modal.projectId}/>;
   if (modal.kind === "risk") return <RiskModal onClose={close} findingId={modal.findingId}/>;
   if (modal.kind === "retire") return <RetireModal onClose={close} projectId={modal.projectId} targetPath={modal.targetPath}/>;
-  if (modal.kind === "connector") return modal.channel === "email" ? <EmailModal onClose={close}/> : <TelegramModal onClose={close}/>;
+  if (modal.kind === "connector") return modal.channel === "email" ? <EmailModal onClose={close}/> : <TelegramModal onClose={close} connectorId={modal.connectorId}/>;
+  if (modal.kind === "recipient") return <RecipientModal onClose={close} connectorId={modal.connectorId}/>;
+  if (modal.kind === "remove-recipient") return <RemoveRecipientModal onClose={close} connectorId={modal.connectorId}/>;
   return <TokenModal onClose={close} audience={modal.audience ?? "api"}/>;
 }
 
@@ -202,21 +204,85 @@ function EmailModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function TelegramModal({ onClose }: { onClose: () => void }) {
-  const { actions } = useWorkspace();
-  const [command, setCommand] = useState("");
+function TelegramModal({ onClose, connectorId }: { onClose: () => void; connectorId?: string }) {
+  const { connectors, actions } = useWorkspace();
+  const existing = connectors.find((connector) => connector.id === connectorId);
+  const [pairing, setPairing] = useState<{ connectorId: string; command: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  async function start() { setBusy(true); setCommand((await actions.pairTelegram()) ?? ""); setBusy(false); }
-  async function confirm() { setBusy(true); if (await actions.confirmTelegram()) onClose(); setBusy(false); }
+  async function start(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const label = String(new FormData(event.currentTarget).get("label") ?? "").trim();
+    setBusy(true);
+    setPairing(await actions.pairTelegram({ connectorId, label }));
+    setBusy(false);
+  }
+  async function confirm() { if (!pairing) return; setBusy(true); if (await actions.confirmTelegram(pairing.connectorId)) onClose(); setBusy(false); }
+  const title = existing ? `Pair ${connectorName(existing)} again` : "Add a Telegram chat";
   return (
-    <Modal title="Telegram chat" description="Connect a private chat with your own Telegram bot. The bot token is not entered here: set it on the server as DEPRADAR_TELEGRAM_BOT_TOKEN." onClose={onClose} steps={[command ? 2 : 1, 2]}>
-      <div className="modal-body">
-        {command ? <>
-          <div className="secret"><small>Send this message to your bot in a private chat within 15 minutes</small><code>{command}</code><div><CopyButton value={command} label="Copy command"/></div></div>
-          <p className="field-hint">Group chats are ignored. DepRadar only reads the pairing command; the bot ignores every other message.</p>
-        </> : <div className="callout"><Icon name="send" size={16}/>DepRadar creates a one-time command. Sending it to your bot from a private chat proves the chat is yours.</div>}
-      </div>
-      <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button>{command ? <button className="btn btn-primary" disabled={busy} onClick={() => void confirm()}>{busy && <span className="spinner"/>}I sent it</button> : <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>{busy && <span className="spinner"/>}Start pairing</button>}</div>
+    <Modal title={title} description="Each person pairs their own private chat with your Telegram bot, and every paired chat receives the alerts. The bot token is not entered here: set it on the server as DEPRADAR_TELEGRAM_BOT_TOKEN." onClose={onClose} steps={[pairing ? 2 : 1, 2]}>
+      {pairing ? <>
+        <div className="modal-body">
+          <div className="secret"><small>{existing ? "Send" : "The person receiving alerts sends"} this message to the bot in a private chat within 15 minutes</small><code>{pairing.command}</code><div><CopyButton value={pairing.command} label="Copy command"/></div></div>
+          <p className="field-hint">Group chats are ignored. DepRadar only reads the pairing command; the bot ignores every other message.{existing ? " The chat stops receiving alerts until the new pairing is confirmed." : ""}</p>
+        </div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy} onClick={() => void confirm()}>{busy && <span className="spinner"/>}It was sent</button></div>
+      </> : <form onSubmit={start}>
+        <div className="modal-body">
+          <label className="field"><span className="field-label">Whose chat is this? <span>Optional</span></span><input className="input" name="label" maxLength={80} defaultValue={existing?.label ?? ""} placeholder="Leave blank to use the name on their Telegram account" autoFocus/></label>
+          <div className="callout"><Icon name="send" size={16}/>DepRadar creates a one-time command. Sending it to the bot from a private chat proves the chat belongs to that person.</div>
+        </div>
+        <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy}>{busy && <span className="spinner"/>}Start pairing</button></div>
+      </form>}
+    </Modal>
+  );
+}
+
+function RecipientModal({ onClose, connectorId }: { onClose: () => void; connectorId: string }) {
+  const { connectors, projects, actions } = useWorkspace();
+  const connector = connectors.find((item) => item.id === connectorId);
+  const [label, setLabel] = useState(connector?.label ?? "");
+  const [every, setEvery] = useState(connector?.all_projects ?? true);
+  const known = new Set(projects.map((project) => project.id));
+  const [chosen, setChosen] = useState<string[]>((connector?.project_ids ?? []).filter((id) => known.has(id)));
+  const [busy, setBusy] = useState(false);
+  if (!connector) return null;
+  const telegram = connector.channel === "telegram";
+  const toggle = (id: string) => setChosen((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!connector) return;
+    setBusy(true);
+    const saved = await actions.updateConnector(connector, { ...(telegram ? { label: label.trim() } : {}), ...(every ? { all_projects: true } : { all_projects: false, project_ids: chosen }) });
+    setBusy(false);
+    if (saved) onClose();
+  }
+  return (
+    <Modal title={telegram ? `Alerts for ${connectorName(connector)}` : "Alerts by email"} description="Choose which projects send alerts here. Each project’s own alert settings still apply." onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="modal-body">
+          {telegram && <label className="field"><span className="field-label">Name</span><input className="input" value={label} maxLength={80} onChange={(event) => setLabel(event.target.value)} placeholder="Telegram chat"/></label>}
+          <div className="field"><span className="field-label">Projects</span><div className="choice-list" role="radiogroup" aria-label="Projects">
+            <button type="button" role="radio" className="choice" aria-checked={every} onClick={() => setEvery(true)}><span className="radio"/><b>All projects</b><small>Includes projects added later.</small></button>
+            <button type="button" role="radio" className="choice" aria-checked={!every} onClick={() => setEvery(false)}><span className="radio"/><b>Only the projects I choose</b><small>Projects added later are not included.</small></button>
+          </div></div>
+          {!every && <div className="field"><span className="field-label">Send alerts for</span>{projects.length ? <div className="choice-list scope-list" role="group" aria-label="Send alerts for">{projects.map((project) => <button key={project.id} type="button" role="checkbox" className="choice" aria-checked={chosen.includes(project.id)} onClick={() => toggle(project.id)}><span className="box"><Icon name="check" size={12}/></span><b>{project.name}</b>{!project.notifications_enabled && <small>Alerts are turned off for this project.</small>}</button>)}</div> : <span className="field-hint">There are no projects yet.</span>}</div>}
+        </div>
+        <div className="modal-foot"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || (!every && !chosen.length)}>{busy && <span className="spinner"/>}Save</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+function RemoveRecipientModal({ onClose, connectorId }: { onClose: () => void; connectorId: string }) {
+  const { connectors, actions } = useWorkspace();
+  const connector = connectors.find((item) => item.id === connectorId);
+  const [busy, setBusy] = useState(false);
+  if (!connector) return null;
+  async function remove() { if (!connector) return; setBusy(true); if (await actions.removeConnector(connector)) onClose(); setBusy(false); }
+  return (
+    <Modal title={`Remove ${connectorName(connector)}?`} description="This chat stops receiving alerts, digests, and summaries, including any waiting to be sent. Its past deliveries stay in the log." onClose={onClose}>
+      <div className="modal-body"><p className="field-hint">To send alerts to this chat again later, add it as a new Telegram chat.</p></div>
+      <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-danger" disabled={busy} onClick={() => void remove()}>{busy && <span className="spinner"/>}<Icon name="trash" size={15}/>Remove chat</button></div>
     </Modal>
   );
 }

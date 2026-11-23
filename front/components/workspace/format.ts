@@ -1,4 +1,4 @@
-import type { ApiToken, Finding, Inventory, Project, Scan } from "@/lib/api";
+import type { ApiToken, Connector, Finding, Inventory, Project, Scan } from "@/lib/api";
 
 export const SEVERITIES = ["critical", "high", "medium", "low", "unknown"] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -226,6 +226,29 @@ export function sentenceCase(value: string) {
 export const deliveryKindLabel = (kind: string) => DELIVERY_KIND[kind] ?? sentenceCase(kind);
 export const deliveryStatusLabel = (status: string) => DELIVERY_STATUS[status] ?? sentenceCase(status);
 export const channelLabel = (id: string) => CHANNEL[id] ?? sentenceCase(id);
+
+/** "Email", or the person a Telegram chat belongs to. */
+export function connectorName(connector: Pick<Connector, "channel" | "label">) {
+  if (connector.channel === "email") return connector.label || "Email";
+  return connector.label || "Telegram chat";
+}
+
+/** Where a delivery went, also for a Telegram chat that was removed since. */
+export function deliveryDestination(connectors: Connector[], id: string): { channel: Connector["channel"]; label: string } {
+  const connector = connectors.find((item) => item.id === id);
+  const channel = connector?.channel ?? (id === "email" ? "email" : "telegram");
+  if (!connector) return { channel, label: channelLabel(channel) };
+  if (channel === "email") return { channel, label: connectorName(connector) };
+  return { channel, label: `Telegram · ${connectorName(connector)}${connector.removed_at ? " (removed)" : ""}` };
+}
+
+/** The projects a destination alerts for, in a few words. */
+export function scopeSummary(connector: Pick<Connector, "all_projects" | "project_ids">, projects: { id: string; name: string }[]) {
+  if (connector.all_projects) return "All projects";
+  const names = connector.project_ids.map((id) => projects.find((project) => project.id === id)?.name).filter((name): name is string => Boolean(name));
+  if (!names.length) return "No projects";
+  return names.length <= 2 ? names.join(", ") : `${names.length} projects`;
+}
 
 /** "Daily digest sent", "Test message queued": one line for an activity feed. */
 export function deliveryEvent(kind: string, status: string) {

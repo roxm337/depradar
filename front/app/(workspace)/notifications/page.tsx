@@ -3,10 +3,10 @@
 import { Fragment, useState } from "react";
 import { Icon } from "@/components/icon";
 import { useWorkspace } from "@/components/workspace/context";
-import { channelLabel, dateTime, deliveryKindLabel, deliveryStatusLabel, projectName, relativeTime } from "@/components/workspace/format";
+import { connectorName, dateTime, deliveryDestination, deliveryKindLabel, deliveryStatusLabel, projectName, relativeTime, scopeSummary } from "@/components/workspace/format";
 import { Pagination } from "@/components/workspace/pagination";
-import { Empty, PageHead, Segmented, Sheet, SkeletonRows, Switch } from "@/components/workspace/ui";
-import type { Delivery, DeliveryAttempt, NotificationPolicy } from "@/lib/api";
+import { Empty, Menu, MenuItem, PageHead, Segmented, Sheet, SkeletonRows, Switch } from "@/components/workspace/ui";
+import type { Connector, Delivery, DeliveryAttempt, NotificationPolicy, Project } from "@/lib/api";
 
 const hours = Array.from({ length: 24 }, (_, hour) => hour);
 const zones = ["UTC", "Europe/Paris", "Europe/London", "Africa/Casablanca", "America/New_York", "America/Los_Angeles", "Asia/Dubai", "Asia/Singapore"];
@@ -28,6 +28,7 @@ export default function NotificationsPage() {
   const rows = shown.slice((current - 1) * pageSize, current * pageSize);
   const failed = deliveries.filter((delivery) => delivery.status === "failed").length;
   const pending = deliveries.filter((delivery) => PENDING.has(delivery.status)).length;
+  const telegram = connectors.filter((connector) => connector.channel === "telegram" && !connector.removed_at);
   async function toggleAttempts(id: string) {
     if (attempts[id]) { setAttempts((current) => { const next = { ...current }; delete next[id]; return next; }); return; }
     try { const rows = await actions.loadAttempts(id); setAttempts((current) => ({ ...current, [id]: rows })); }
@@ -39,25 +40,10 @@ export default function NotificationsPage() {
       <PageHead title="Notifications" lede="Where alerts go, when they are sent, and what happened to each one. DepRadar records when your mail server or Telegram accepts a message, but cannot confirm it reached the inbox."/>
       <div className="notif-grid">
         <Sheet title="Channels" meta="Verified destinations only">
-          {(["email", "telegram"] as const).map((channel) => {
-            const connector = connectors.find((item) => item.id === channel);
-            const verified = Boolean(connector?.verified_at);
-            const destination = channel === "email" ? String(connector?.config.recipient ?? "") : "Private chat";
-            return (
-              <div className="channel" key={channel}>
-                <span className="channel-mark"><Icon name={channel === "email" ? "mail" : "send"} size={18}/></span>
-                <div className="channel-copy">
-                  <b>{channel === "email" ? "Email" : "Telegram"}<span className={`tag ${verified ? (connector?.enabled ? "tag-ok" : "tag-warn") : ""}`}>{verified ? (connector?.enabled ? "Active" : "Paused") : "Not connected"}</span></b>
-                  {verified ? <><small title={destination}>{destination}</small><small>Verified {relativeTime(now, connector?.verified_at)}</small></> : <small>{connector ? (channel === "email" ? `Verification pending${destination ? ` for ${destination}` : ""} · check the delivery log` : "Pairing not finished") : "Connect a destination to receive alerts"}</small>}
-                </div>
-                <div className="channel-actions">
-                  {verified && <button className="btn btn-secondary btn-sm" onClick={() => void actions.connectorAction(channel, "test")}>Send test</button>}
-                  {verified && <button className="btn btn-ghost btn-sm" onClick={() => void actions.connectorAction(channel, connector?.enabled ? "disable" : "enable")}>{connector?.enabled ? "Pause" : "Resume"}</button>}
-                  <button className={`btn btn-sm ${verified ? "btn-ghost" : "btn-primary"}`} onClick={() => workspace.setModal({ kind: "connector", channel })}>{verified ? "Change" : "Connect"}</button>
-                </div>
-              </div>
-            );
-          })}
+          <ChannelRow channel="email" connector={connectors.find((item) => item.id === "email")} projects={projects} now={now}/>
+          {telegram.map((connector) => <ChannelRow key={connector.id} channel="telegram" connector={connector} projects={projects} now={now}/>)}
+          {!telegram.length && <ChannelRow channel="telegram" projects={projects} now={now}/>}
+          {telegram.length > 0 && <div className="channel-add"><button className="btn btn-secondary btn-sm" onClick={() => workspace.setModal({ kind: "connector", channel: "telegram" })}><Icon name="plus" size={14}/>Add a Telegram chat</button><small>Pair one chat per person, so everyone on the team gets the alerts.</small></div>}
           <div className="sheet-foot"><Icon name="lock" size={14}/>Mail server passwords and bot tokens are set on the server and never shown on this page.</div>
         </Sheet>
         <PolicyForm key={JSON.stringify(policy)} policy={policy} onSave={actions.savePolicy}/>
@@ -71,7 +57,7 @@ export default function NotificationsPage() {
                 <Fragment key={delivery.id}>
                   <tr>
                     <td><div className="cell-main"><b>{deliveryKindLabel(delivery.kind)}</b><small>{delivery.project_id ? projectName(projects, delivery.project_id) : delivery.kind === "digest" ? "Every project" : "Workspace"}</small>{delivery.last_error && <small className="delivery-error mono" title="Provider error code">{delivery.last_error}</small>}</div></td>
-                    <td className="col-optional"><span className="delivery-channel"><Icon name={delivery.connector_id === "email" ? "mail" : "send"} size={14}/>{channelLabel(delivery.connector_id)}</span></td>
+                    <td className="col-optional"><DeliveryChannel connectors={connectors} id={delivery.connector_id}/></td>
                     <td><span className="status"><i className={`dot ${statusTone[delivery.status] ?? ""}`}/>{deliveryStatusLabel(delivery.status)}</span></td>
                     <td className="col-optional">{delivery.attempts > 0 ? <button className="link delivery-attempts" aria-expanded={Boolean(attempts[delivery.id])} onClick={() => void toggleAttempts(delivery.id)}>{delivery.attempts} {delivery.attempts === 1 ? "attempt" : "attempts"}<Icon name={attempts[delivery.id] ? "chevron-up" : "chevron-down"} size={13}/></button> : <span className="muted">None yet</span>}</td>
                     <td className="col-optional muted nowrap"><time dateTime={delivery.created_at} title={dateTime(delivery.created_at)}>{relativeTime(now, delivery.created_at)}</time></td>
@@ -88,6 +74,44 @@ export default function NotificationsPage() {
         {ready && shown.length > 0 && <Pagination total={shown.length} page={current} pageSize={pageSize} sizes={[25, 50, 100]} noun="deliveries" onPage={(value) => setPage({ filter, value })} onPageSize={(size) => { setPageSize(size); setPage({ filter, value: 1 }); }}/>}
       </Sheet>
     </>
+  );
+}
+
+function DeliveryChannel({ connectors, id }: { connectors: Connector[]; id: string }) {
+  const destination = deliveryDestination(connectors, id);
+  return <span className="delivery-channel"><Icon name={destination.channel === "email" ? "mail" : "send"} size={14}/>{destination.label}</span>;
+}
+
+function ChannelRow({ channel, connector, projects, now }: { channel: "email" | "telegram"; connector?: Connector; projects: Project[]; now: number }) {
+  const { actions, setModal } = useWorkspace();
+  const verified = Boolean(connector?.verified_at);
+  const email = channel === "email";
+  const name = email ? "Email" : connector ? connectorName(connector) : "Telegram";
+  const destination = email ? String(connector?.config.recipient ?? "") : "Private chat";
+  const scope = connector ? scopeSummary(connector, projects) : "";
+  const pairing = connector && !verified;
+  const change = () => setModal(email ? { kind: "connector", channel } : { kind: "connector", channel, connectorId: connector?.id });
+  return (
+    <div className="channel">
+      <span className="channel-mark"><Icon name={email ? "mail" : "send"} size={18}/></span>
+      <div className="channel-copy">
+        <b><span className="channel-name" title={name}>{name}</span><span className={`tag ${verified ? (connector?.enabled ? "tag-ok" : "tag-warn") : ""}`}>{verified ? (connector?.enabled ? "Active" : "Paused") : "Not connected"}</span></b>
+        {verified ? <><small title={destination}>{email ? destination : `Telegram · verified ${relativeTime(now, connector?.verified_at)}`}</small>{email && <small>Verified {relativeTime(now, connector?.verified_at)}</small>}<small className={scope === "No projects" ? "channel-warn" : ""} title={scope}>{scope === "No projects" ? "No projects selected, so nothing is sent here" : `Alerts for ${scope.charAt(0).toLowerCase()}${scope.slice(1)}`}</small></>
+          : <small>{connector ? (email ? `Verification pending${destination ? ` for ${destination}` : ""} · check the delivery log` : "Pairing not finished") : email ? "Connect a destination to receive alerts" : "Pair a private chat to receive alerts on Telegram"}</small>}
+      </div>
+      <div className="channel-actions">
+        {verified && connector && <button className="btn btn-secondary btn-sm" onClick={() => void actions.connectorAction(connector, "test")}>Send test</button>}
+        {verified && connector && <button className="btn btn-ghost btn-sm" onClick={() => void actions.connectorAction(connector, connector.enabled ? "disable" : "enable")}>{connector.enabled ? "Pause" : "Resume"}</button>}
+        {!connector || pairing ? <button className={`btn btn-sm ${pairing ? "btn-secondary" : "btn-primary"}`} onClick={change}>{pairing ? (email ? "Change" : "Pair again") : "Connect"}</button> : null}
+        {connector && <Menu label={`${name} options`} trigger={({ props }) => <button className="icon-btn" {...props} aria-label={`${name} options`} title="More options"><Icon name="more" size={16}/></button>}>
+          {(close) => <>
+            <MenuItem icon="list" onSelect={() => { close(); setModal({ kind: "recipient", connectorId: connector.id }); }}>{email ? "Choose projects" : "Name and projects"}</MenuItem>
+            {verified && <MenuItem icon={email ? "settings" : "refresh"} onSelect={() => { close(); change(); }}>{email ? "Change address or server" : "Pair again"}</MenuItem>}
+            {!email && <MenuItem icon="trash" danger onSelect={() => { close(); setModal({ kind: "remove-recipient", connectorId: connector.id }); }}>Remove chat</MenuItem>}
+          </>}
+        </Menu>}
+      </div>
+    </div>
   );
 }
 

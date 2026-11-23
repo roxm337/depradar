@@ -69,11 +69,19 @@ export type Scan = {
   mode?: "monitor" | "check";
 };
 
+/** One notification destination: the email address, or one paired Telegram chat. */
 export type Connector = {
-  id: "email" | "telegram";
+  id: string;
+  channel: "email" | "telegram";
+  label: string;
   enabled: boolean;
   verified_at: string | null;
+  /** Set once a Telegram chat is removed; kept so delivery history can still name it. */
+  removed_at: string | null;
   config: Record<string, string | number | boolean>;
+  /** False limits the destination to `project_ids`. */
+  all_projects: boolean;
+  project_ids: string[];
   credential_configured: boolean;
 };
 
