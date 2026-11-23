@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Finding } from "../../lib/api.ts";
 import {
-  acknowledgeable, ageLabel, BUILTIN_VIEWS, csvCell, csvFileName, decisionOf, defaultFilters, filterFindings, isFiltered, pageWindow,
-  parseColumns, parsePageSize, parseViews, rangeIds, sameView, serializeViews, severityCounts, sortFindings, toCsv, toggleSort, upsertView,
+  acknowledgeable, ageLabel, BUILTIN_VIEWS, countAdvisories, csvCell, csvFileName, decisionOf, defaultFilters, filterFindings, groupDecision, groupFindings,
+  groupFix, isFiltered, packageKey, pageWindow, parseColumns, parseGroupMode, parsePageSize, parseViews, projectCount, rangeIds, sameView, serializeViews,
+  severityCounts, sortFindings, toCsv, toggleSort, upsertView,
   type FindingFilters,
 } from "./findings-logic.ts";
 
@@ -220,6 +221,89 @@ describe("columns, paging, and selection", () => {
     assert.deepEqual(rangeIds(list, null, "c"), ["c"]);
     assert.deepEqual(rangeIds(list, "zzz", "c"), ["c"]);
     assert.deepEqual(rangeIds(list, "a", "zzz"), []);
+  });
+});
+
+describe("grouping by package", () => {
+  const rows = [
+    finding("pico-new", { package_name: "picomatch", package_version: "4.0.7", severity: "high", epss_score: 0.003, fixed_versions: [], advisory_ids: ["GHSA-fc5q", "CVE-1"], first_seen_at: ago(5) }),
+    finding("lite-high", { ecosystem: "PyPI", package_name: "litellm", package_version: "1.95.0", severity: "high", project_id: "p2", target_path: "requirements.txt", advisory_ids: ["GHSA-7hp6"], fixed_versions: ["1.100.4"] }),
+    finding("pico-old", { package_name: "picomatch", package_version: "2.3.2", severity: "high", epss_score: 0.002, fixed_versions: [], advisory_ids: ["CVE-1"], first_seen_at: ago(9) }),
+    finding("lite-unknown", { ecosystem: "PyPI", package_name: "litellm", package_version: "1.95.0", severity: "unknown", project_id: "p2", target_path: "requirements.txt", advisory_ids: ["GHSA-3cv6"], fixed_versions: ["1.88.6"], workflow_status: "acknowledged" }),
+    finding("solo", { package_name: "next", package_version: "16.4.2", severity: "unknown" }),
+  ];
+
+  test("groups keep the order of their highest-placed finding", () => {
+    const groups = groupFindings(rows, names);
+    assert.deepEqual(groups.map((group) => group.name), ["picomatch", "litellm", "next"]);
+    assert.deepEqual(groups.map((group) => group.findings.length), [2, 2, 1]);
+  });
+
+  test("the key separates ecosystems and ignores case", () => {
+    assert.notEqual(packageKey(finding("a", { ecosystem: "npm", package_name: "requests" })), packageKey(finding("b", { ecosystem: "PyPI", package_name: "requests" })));
+    assert.equal(packageKey(finding("a", { ecosystem: "PyPI", package_name: "Django" })), packageKey(finding("b", { ecosystem: "pypi", package_name: "django" })));
+    assert.equal(groupFindings([finding("a", { ecosystem: "npm", package_name: "x" }), finding("b", { ecosystem: "PyPI", package_name: "x" })], names).length, 2);
+  });
+
+  test("a group summarizes versions, places, advisories, fixes, and signals", () => {
+    const [pico, lite] = groupFindings(rows, names);
+    assert.deepEqual(pico.versions, ["4.0.7", "2.3.2"]);
+    assert.equal(pico.projects, 1);
+    assert.equal(pico.places, 1);
+    assert.equal(pico.advisories, 1, "aliases of one advisory count once");
+    assert.equal(pico.fixable, 0);
+    assert.equal(pico.epss, 0.003);
+    assert.equal(pico.firstSeen, ago(9));
+    assert.equal(lite.advisories, 2);
+    assert.equal(lite.lead.id, "lite-high");
+    assert.equal(lite.versions.length, 1);
+  });
+
+  test("rows inside a group sit together by project, then manifest", () => {
+    const spread = [
+      finding("b1", { project_id: "p2", target_path: "b/package-lock.json" }),
+      finding("a1", { project_id: "p1", target_path: "z/package-lock.json" }),
+      finding("b0", { project_id: "p2", target_path: "a/package-lock.json" }),
+      finding("a2", { project_id: "p1", target_path: "a/package-lock.json" }),
+    ];
+    const [group] = groupFindings(spread, names);
+    assert.deepEqual(group.findings.map((item) => item.id), ["a2", "a1", "b0", "b1"]);
+    assert.equal(group.projects, 2);
+    assert.equal(group.places, 4);
+  });
+
+  test("advisory clusters merge through shared aliases", () => {
+    const linked = [finding("1", { advisory_ids: ["A"] }), finding("2", { advisory_ids: ["B"] }), finding("3", { advisory_ids: ["A", "B"] }), finding("4", { advisory_ids: ["C"] })];
+    assert.equal(countAdvisories(linked), 2);
+    assert.equal(countAdvisories([]), 0);
+  });
+
+  test("the review summary agrees when findings agree and counts what still needs review", () => {
+    const [pico, lite, solo] = groupFindings(rows, names);
+    assert.deepEqual(groupDecision(pico), { kind: "awaiting", label: "Not reviewed" });
+    assert.deepEqual(groupDecision(lite), { kind: "awaiting", label: "1 not reviewed" });
+    assert.equal(groupDecision(solo).label, "Not reviewed");
+    const [reviewed] = groupFindings([finding("x", { workflow_status: "acknowledged" }), finding("y", { workflow_status: "risk_accepted", risk_until: ago(-30) })], names);
+    assert.deepEqual(groupDecision(reviewed), { kind: "mixed", label: "Reviewed" });
+    const [accepted] = groupFindings([finding("x", { workflow_status: "risk_accepted", risk_until: ago(-30) }), finding("y", { workflow_status: "risk_accepted", risk_until: ago(-60) })], names);
+    assert.deepEqual(groupDecision(accepted), { kind: "accepted", label: "Risk accepted" });
+  });
+
+  test("the fix summary never claims one version fixes different lines", () => {
+    const [pico, lite] = groupFindings(rows, names);
+    assert.deepEqual(groupFix(pico), { label: "No fix yet", none: true });
+    assert.deepEqual(groupFix(lite), { label: "Fix for 2/2", none: false });
+    const [shared] = groupFindings([finding("x"), finding("y", { package_version: "4.17.16" })], names);
+    assert.deepEqual(groupFix(shared), { version: "4.17.21" });
+    const [partial] = groupFindings([finding("x"), finding("y", { fixed_versions: [] })], names);
+    assert.deepEqual(groupFix(partial), { label: "Fix for 1/2", none: false });
+  });
+
+  test("group mode and project counts", () => {
+    assert.equal(parseGroupMode("package"), "package");
+    assert.equal(parseGroupMode(null), "none");
+    assert.equal(parseGroupMode("garbage"), "none");
+    assert.equal(projectCount(rows), 2);
   });
 });
 

@@ -256,6 +256,111 @@ export function rangeIds(ids: readonly string[], anchor: string | null, target: 
   return ids.slice(Math.min(start, end), Math.max(start, end) + 1);
 }
 
+// ── Grouping by package ──────────────────────────────────────────────────────
+
+export type GroupMode = "none" | "package";
+export const parseGroupMode = (raw: string | null): GroupMode => (raw === "package" ? "package" : "none");
+export const serializeGroupMode = (mode: GroupMode) => mode;
+
+/**
+ * Every finding for one package across all projects: each version, each advisory, each manifest.
+ * Purely a way to show the list; findings still resolve, reopen, and get reviewed one by one.
+ */
+export type FindingGroup = {
+  key: string;
+  ecosystem: string;
+  name: string;
+  /** Ordered by project, then manifest, then the list's own order, so each repo's rows sit together. */
+  findings: Finding[];
+  /** The most urgent finding; its severity speaks for the group. */
+  lead: Finding;
+  versions: string[];
+  projects: number;
+  /** Distinct project and manifest pairs. */
+  places: number;
+  /** Distinct advisories; aliases of one advisory count once. */
+  advisories: number;
+  fixable: number;
+  kev: boolean;
+  epss: number | null;
+  /** When the oldest finding was first detected. */
+  firstSeen: string;
+};
+
+/** Ecosystems never contain "/", so this stays unambiguous for scoped names such as @scope/pkg. */
+export const packageKey = (finding: Finding) => `${finding.ecosystem.toLowerCase()}/${finding.package_name.toLowerCase()}`;
+export const placeKey = (finding: Finding) => `${finding.project_id}\n${finding.target_path}`;
+
+/** Findings that share an advisory ID are aliases of each other; count each such cluster once. */
+export function countAdvisories(findings: readonly Finding[]): number {
+  const clusters: Set<string>[] = [];
+  for (const finding of findings) {
+    const merged = new Set(finding.advisory_ids);
+    for (let index = clusters.length - 1; index >= 0; index -= 1) {
+      if ([...clusters[index]].some((id) => merged.has(id))) {
+        for (const id of clusters[index]) merged.add(id);
+        clusters.splice(index, 1);
+      }
+    }
+    if (merged.size) clusters.push(merged);
+  }
+  return clusters.length;
+}
+
+/** Groups an already sorted list. Groups keep the order of their highest-placed finding. */
+export function groupFindings(sorted: readonly Finding[], names: ProjectNames): FindingGroup[] {
+  const buckets = new Map<string, Finding[]>();
+  for (const finding of sorted) {
+    const key = packageKey(finding);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(finding); else buckets.set(key, [finding]);
+  }
+  return [...buckets].map(([key, members]) => {
+    const order = new Map(members.map((finding, index) => [finding.id, index]));
+    const project = (finding: Finding) => names.get(finding.project_id) ?? "";
+    const findings = [...members].sort((a, b) => collator.compare(project(a), project(b)) || a.project_id.localeCompare(b.project_id) || collator.compare(a.target_path, b.target_path) || order.get(a.id)! - order.get(b.id)!);
+    const scores = members.map((finding) => finding.epss_score).filter((score): score is number => score !== null);
+    return {
+      key,
+      ecosystem: members[0].ecosystem,
+      name: members[0].package_name,
+      findings,
+      lead: [...members].sort(byPriority)[0],
+      versions: [...new Set(members.map((finding) => finding.package_version))].sort((a, b) => collator.compare(b, a)),
+      projects: new Set(members.map((finding) => finding.project_id)).size,
+      places: new Set(members.map(placeKey)).size,
+      advisories: countAdvisories(members),
+      fixable: members.filter((finding) => finding.fixed_versions.length > 0).length,
+      kev: members.some((finding) => finding.kev_known),
+      epss: scores.length ? Math.max(...scores) : null,
+      firstSeen: members.reduce((oldest, finding) => (Date.parse(finding.first_seen_at) < Date.parse(oldest) ? finding.first_seen_at : oldest), members[0].first_seen_at),
+    };
+  });
+}
+
+/** One review label for a whole group: shared when every finding agrees, otherwise what still needs review. */
+export function groupDecision(group: FindingGroup): Decision | { kind: "mixed"; label: string } {
+  const decisions = group.findings.map(decisionOf);
+  const kinds = new Set(decisions.map((decision) => decision.kind));
+  if (kinds.size === 1) {
+    const [only] = decisions;
+    return new Set(decisions.map((decision) => decision.label)).size === 1 ? only : { kind: only.kind, label: only.kind === "accepted" ? "Risk accepted" : only.label };
+  }
+  const awaiting = decisions.filter((decision) => decision.kind === "awaiting").length;
+  return awaiting ? { kind: "awaiting", label: `${awaiting} not reviewed` } : { kind: "mixed", label: "Reviewed" };
+}
+
+/** "Fix for 2/3" style summary; a single shared fix version is shown as is. */
+export function groupFix(group: FindingGroup): { version: string } | { label: string; none: boolean } {
+  const firsts = new Set(group.findings.map((finding) => finding.fixed_versions[0] ?? ""));
+  if (firsts.size === 1 && !firsts.has("")) return { version: [...firsts][0] };
+  if (!group.fixable) return { label: "No fix yet", none: true };
+  return { label: `Fix for ${group.fixable}/${group.findings.length}`, none: false };
+}
+
+/** How many distinct projects a set of findings touches. */
+export const projectCount = (findings: readonly Finding[]) => new Set(findings.map((finding) => finding.project_id)).size;
+
 // ── CSV export ───────────────────────────────────────────────────────────────
 
 /**
