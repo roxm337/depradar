@@ -13,6 +13,10 @@ type Props = {
   statusCounts: { open: number; resolved: number; all: number };
   severityCounts: Record<string, number>;
   resultCount: number;
+  /** How many packages the findings fall into, while grouped by package. */
+  groupCount: number | null;
+  grouped: boolean;
+  onGrouped: (grouped: boolean) => void;
   filtered: boolean;
   /** Set while a column sort replaces the default priority order. */
   sortLabel: string | null;
@@ -29,7 +33,7 @@ type Props = {
   onExport: () => void;
 };
 
-export function FindingsToolbar({ filters, query, projects, statusCounts, severityCounts, resultCount, filtered, sortLabel, columns, views, onQuery, onFilters, onClear, onResetSort, onApplyView, onSaveView, onDeleteView, onColumns, onExport }: Props) {
+export function FindingsToolbar({ filters, query, projects, statusCounts, severityCounts, resultCount, groupCount, grouped, onGrouped, filtered, sortLabel, columns, views, onQuery, onFilters, onClear, onResetSort, onApplyView, onSaveView, onDeleteView, onColumns, onExport }: Props) {
   return (
     <>
       <div className="toolbar findings-toolbar">
@@ -50,6 +54,7 @@ export function FindingsToolbar({ filters, query, projects, statusCounts, severi
           <option value="decided">Acknowledged or accepted</option>
         </select>
         <div className="toolbar-end">
+          <button className="btn btn-secondary" aria-pressed={grouped} onClick={() => onGrouped(!grouped)} title={grouped ? "Show one row per finding" : "Group findings by package: every version, advisory, and project under one row"}><Icon name="layers" size={15}/><span className="btn-label">Group by package</span></button>
           <Menu label="Saved views" trigger={({ props }) => <button className="btn btn-secondary" {...props} title="Saved views"><Icon name="bookmark" size={15}/><span className="btn-label">Views</span><Icon name="chevron-down" size={14}/></button>}>
             {(close) => (
               <>
@@ -103,7 +108,7 @@ export function FindingsToolbar({ filters, query, projects, statusCounts, severi
         <button className="chip" aria-pressed={filters.fixable} onClick={() => onFilters({ fixable: !filters.fixable })}>Fix available</button>
         {sortLabel && <button className="chip is-sort" onClick={onResetSort} title="Return to priority order">Sorted by {sortLabel}<Icon name="close" size={12}/></button>}
         {filtered && <button className="btn btn-ghost btn-sm" onClick={onClear}><Icon name="close" size={13}/>Clear filters</button>}
-        <span className="toolbar-meta num">{resultCount} {resultCount === 1 ? "finding" : "findings"}</span>
+        <span className="toolbar-meta num">{resultCount} {resultCount === 1 ? "finding" : "findings"}{groupCount !== null && ` in ${groupCount} ${groupCount === 1 ? "package" : "packages"}`}</span>
       </div>
     </>
   );
