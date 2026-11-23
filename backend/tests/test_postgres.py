@@ -414,6 +414,93 @@ def test_tokens_keep_their_interface_across_0008(monkeypatch: pytest.MonkeyPatch
         get_settings.cache_clear()
 
 
+def test_telegram_chat_becomes_a_recipient_across_0009(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0009 keeps the paired chat and its bot offset; downgrading keeps only that chat."""
+    from alembic import command
+    from alembic.autogenerate import compare_metadata
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+
+    from depradar.config import get_settings
+    from depradar.domain.entities import Base
+
+    schema = "migration_0009_" + uuid4().hex
+    url = os.environ["DEPRADAR_TEST_DATABASE_URL"]
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    project = str(uuid4())
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'SET search_path TO "{schema}"'))
+            connection.commit()
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0008")
+            connection.execute(
+                text(
+                    "INSERT INTO project (id, name, description, created_at, monitoring_enabled,"
+                    " check_interval_hours, notifications_enabled)"
+                    " VALUES (:id, 'Legacy', '', now(), true, 24, true)"
+                ),
+                {"id": project},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connector (id, config, enabled, generation, verified_at,"
+                    " update_offset, next_send_at) VALUES"
+                    " ('telegram', '{\"chat_id\": \"7\"}', true, 3, now(), 42, now()),"
+                    " ('email', '{}', true, 1, now(), 0, now())"
+                )
+            )
+            connection.commit()
+            command.upgrade(config, "head")
+            drift = [
+                change
+                for change in compare_metadata(
+                    MigrationContext.configure(connection), Base.metadata
+                )
+                if any(name in str(change) for name in ("connector", "telegram_update_offset"))
+            ]
+            assert drift == []
+            rows = connection.execute(
+                text("SELECT id, channel, label, all_projects FROM connector ORDER BY id")
+            ).all()
+            assert [tuple(row) for row in rows] == [
+                ("email", "email", "", True),
+                ("telegram", "telegram", "", True),
+            ]
+            offset = "SELECT telegram_update_offset FROM system_state"
+            assert connection.execute(text(offset)).scalars().all() == [42]
+            connection.execute(
+                text(
+                    "INSERT INTO connector (id, channel, label, config, enabled, generation,"
+                    " next_send_at, all_projects, created_at) VALUES ('telegram-0a1b2c3d',"
+                    " 'telegram', 'Sara', '{}', true, 1, now(), false, now())"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connector_project (connector_id, project_id)"
+                    " VALUES ('telegram-0a1b2c3d', :project)"
+                ),
+                {"project": project},
+            )
+            connection.commit()
+            command.downgrade(config, "0008")
+            rows = connection.execute(
+                text("SELECT id, update_offset FROM connector ORDER BY id")
+            ).all()
+            assert [tuple(row) for row in rows] == [("email", 0), ("telegram", 42)]
+            assert "connector_project" not in inspect(connection).get_table_names(schema)
+            connection.commit()
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        engine.dispose()
+        get_settings.cache_clear()
+
+
 def test_backup_restore_drill_on_postgresql(
     harness: Harness, project_id: str, tmp_path: Path
 ) -> None:

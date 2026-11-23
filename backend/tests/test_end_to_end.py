@@ -12,7 +12,7 @@ from sqlalchemy import select
 from depradar.application.notifications import deliver_once
 from depradar.application.scans import run_once
 from depradar.application.scheduling import tick
-from depradar.domain.entities import Delivery, Finding, Project, utcnow
+from depradar.domain.entities import Connector, Delivery, Finding, Project, utcnow
 from depradar.infrastructure.backups import create_backup, verify_backup
 from depradar.infrastructure.notifier import Notifier
 from depradar.infrastructure.scanner_client import RemoteScanner
@@ -112,14 +112,13 @@ def test_postgres_osv_smtp_telegram_scheduling_decisions_backup_and_delete(
     tick(harness.factory, harness.settings, harness.store)
     drain(harness)
     with harness.factory() as db:
-        assert {
-            d.connector_id
-            for d in db.scalars(
-                select(Delivery).where(
-                    Delivery.project_id == project_id, Delivery.status == "accepted"
-                )
+        assert set(
+            db.scalars(
+                select(Connector.channel)
+                .join(Delivery, Delivery.connector_id == Connector.id)
+                .where(Delivery.project_id == project_id, Delivery.status == "accepted")
             )
-        } == {"email", "telegram"}
+        ) == {"email", "telegram"}
     with httpx.Client(trust_env=False) as client:
         sent = client.get(harness.settings.telegram_api_base_url + "/fixture/messages").json()
         inbox = client.get("http://mailpit:8025/api/v1/messages").json()["messages"]

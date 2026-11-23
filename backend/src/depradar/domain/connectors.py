@@ -1,7 +1,7 @@
 """Settings of the notification destinations the owner configures."""
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -24,3 +24,21 @@ class EmailConfig(BaseModel):
         ):
             raise ValueError("Use a bare email address without display names or newlines")
         return value
+
+
+# A Telegram chat (one person) is one recipient; the cap keeps a mistaken loop from piling up rows.
+MAX_TELEGRAM_RECIPIENTS = 20
+LABEL_MAX = 80
+
+
+def clean_label(value: str) -> str:
+    """One line of printable text, short enough to show beside a destination."""
+    printable = "".join(char if char.isprintable() else " " for char in value)
+    return " ".join(printable.split())[:LABEL_MAX]
+
+
+def chat_label(chat: dict[str, Any]) -> str:
+    """A default name for a paired chat, from the names its owner set in Telegram."""
+    name = " ".join(str(chat.get(key) or "") for key in ("first_name", "last_name"))
+    username = str(chat.get("username") or "")
+    return clean_label(name) or (clean_label(f"@{username}") if username else "")

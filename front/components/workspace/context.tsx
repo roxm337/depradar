@@ -3,13 +3,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, json, setCsrfToken, UNAUTHORIZED_EVENT, type ApiToken, type Connector, type CreatedApiToken, type DecisionDetail, type DecisionSummary, type Delivery, type DeliveryAttempt, type Finding, type FindingDecision, type Identities, type IdentityInput, type Inventory, type NotificationPolicy, type OperationsHealth, type Policies, type PolicyRules, type PolicyVersion, type Project, type ReportFormat, type RetentionPolicy, type Scan, type TokenAudience, type TrustedIdentity } from "@/lib/api";
-import { cadence, channelLabel, supportedInventory } from "@/components/workspace/format";
+import { cadence, connectorName, supportedInventory } from "@/components/workspace/format";
 import { defaultFilters, type FindingFilters } from "@/components/workspace/findings-logic";
 import { DEFAULT_RULES, normalizeRules, reportFile } from "@/components/workspace/policy-logic";
 
 export type Session = "checking" | "ready" | "offline";
 export type Notice = { kind: "success" | "error" | "info"; text: string } | null;
-export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram" } | { kind: "token"; audience?: TokenAudience } | null;
+export type ModalState = { kind: "project" } | { kind: "upload"; projectId?: string } | { kind: "risk"; findingId: string } | { kind: "retire"; projectId: string; targetPath: string } | { kind: "connector"; channel: "email" | "telegram"; connectorId?: string } | { kind: "recipient"; connectorId: string } | { kind: "remove-recipient"; connectorId: string } | { kind: "token"; audience?: TokenAudience } | null;
 export type Filters = FindingFilters;
 export type EmailInput = { host: string; port: number; username: string; sender: string; recipient: string; tls_mode: string };
 export type UploadInput = { projectId: string; file: File; targetPath: string; revision: string };
@@ -268,18 +268,25 @@ function useWorkspaceState() {
       catch (failure) { notify("error", message(failure, "Could not configure email.")); return false; }
     },
     verifyEmail: (code: string) => run(() => api("connectors/email/verify", json("POST", { code })), "Email destination verified."),
-    pairTelegram: async () => {
-      try { return (await api<{ command: string }>("connectors/telegram/pair", json("POST", {}))).command; }
-      catch (failure) { notify("error", message(failure, "Could not start Telegram pairing.")); return null; }
-    },
-    confirmTelegram: async () => {
+    pairTelegram: async (input: { connectorId?: string; label: string }) => {
       try {
-        const result = await api<{ status: string }>("connectors/telegram/confirm", json("POST", {}));
+        const result = await api<{ connector_id: string; command: string }>("connectors/telegram/pair", json("POST", { connector_id: input.connectorId ?? null, label: input.label }));
+        return { connectorId: result.connector_id, command: result.command };
+      } catch (failure) { notify("error", message(failure, "Could not start Telegram pairing.")); return null; }
+    },
+    confirmTelegram: async (connectorId: string) => {
+      try {
+        const result = await api<{ status: string }>("connectors/telegram/confirm", json("POST", { connector_id: connectorId }));
         if (result.status !== "verified") { notify("info", "Still waiting for the command in a private chat with your bot."); return false; }
-        notify("success", "Telegram connected."); await load(); return true;
+        notify("success", "Telegram chat connected."); await load(); return true;
       } catch (failure) { notify("error", message(failure, "Telegram pairing could not be confirmed.")); return false; }
     },
-    connectorAction: (channel: string, action: "test" | "enable" | "disable") => run(() => api(`connectors/${channel}/${action}`, json("POST", {})), action === "test" ? `${channelLabel(channel)} test message queued.` : action === "enable" ? `${channelLabel(channel)} alerts resumed.` : `${channelLabel(channel)} alerts paused.`),
+    connectorAction: (connector: Connector, action: "test" | "enable" | "disable") => {
+      const name = connector.channel === "email" ? "Email" : connectorName(connector);
+      return run(() => api(`connectors/${connector.id}/${action}`, json("POST", {})), action === "test" ? `Test message to ${name} queued.` : action === "enable" ? `Alerts to ${name} resumed.` : `Alerts to ${name} paused.`);
+    },
+    updateConnector: (connector: Connector, input: { label?: string; all_projects?: boolean; project_ids?: string[] }) => run(() => api(`connectors/${connector.id}`, json("PATCH", input)), "Destination saved."),
+    removeConnector: (connector: Connector) => run(() => api(`connectors/${connector.id}`, { method: "DELETE" }), `${connectorName(connector)} no longer receives alerts.`),
     savePolicy: (value: NotificationPolicy) => run(() => api("notifications/policy", json("PUT", value)), "Alert settings saved."),
     saveRetention: (value: RetentionPolicy) => run(() => api("maintenance/retention", json("PUT", value)), "Retention saved."),
     runRetention: async () => {

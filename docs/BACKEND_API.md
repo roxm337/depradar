@@ -40,20 +40,55 @@ even if normal alerts are configured as disabled.
 Create a dedicated personal bot and put its token in `DEPRADAR_TELEGRAM_BOT_TOKEN`.
 Restart API and worker. Do not put the token into API requests, source files, or exported settings.
 
-1. `POST /api/connectors/telegram/pair` returns a one-time `/start ...` command.
-2. Send that command to your bot in a **private chat** within 15 minutes.
-3. `POST /api/connectors/telegram/confirm` checks updates and returns `verified`, or a waiting status.
+Several private chats can receive alerts, for example one per developer. Each paired chat is its own
+destination, with its own ID (`telegram-` followed by 8 hex characters), verification, pause switch,
+project scope, and delivery history. Up to 20 chats can be paired.
+
+1. `POST /api/connectors/telegram/pair`, optional body `{"label":"Sara"}`, returns the new chat's
+   `connector_id` and a one-time `/start ...` command. To pair an existing chat again, send its
+   `connector_id`; it stops receiving alerts until the new pairing is confirmed.
+2. The person who will receive alerts sends that command to the bot in a **private chat** within
+   15 minutes. `/start@your_bot <code>` is accepted as well.
+3. `POST /api/connectors/telegram/confirm`, body `{"connector_id":"telegram-…"}`, reads the bot's
+   updates and returns `verified`, or a waiting status. One read binds every pending pairing whose
+   command arrived, because Telegram confirms updates for the whole bot. Without a body, it returns
+   `verified` when any pairing was bound.
+
+A label left empty is filled from the chat's Telegram name. A chat that already receives alerts
+cannot be paired a second time (`409`). `DELETE /api/connectors/{connector_id}` removes a Telegram
+chat: unsent deliveries are cancelled, the chat ID is forgotten, and the label stays so the delivery
+log can still name it until retention removes the chat's last delivery. Email has a single
+destination, which is reconfigured rather than removed.
 
 Pairing uses short polling, so no public inbound webhook is needed. Use a dedicated bot without an
 existing webhook or another consumer of `getUpdates`. Group chats and state-changing bot commands
-are not supported. Re-pair after switching to a different bot.
+are not supported. Re-pair every chat after switching to a different bot.
+
+## Project scope
+
+Every destination, email included, receives alerts for all projects by default.
+`PATCH /api/connectors/{connector_id}` limits it to some projects, or renames it:
+
+```json
+{ "label": "Sara", "all_projects": false, "project_ids": ["<project id>", "<project id>"] }
+```
+
+All fields are optional; sending `project_ids` alone implies `"all_projects": false`, and
+`{"all_projects": true}` restores every project. An empty selection is rejected. Alerts, digests,
+and initial-scan reports skip projects outside the scope, at routing time and again at send time,
+so narrowing a scope also cancels alerts already queued for the dropped projects. The welcome
+summary sent after verification counts only the projects in scope. Each project's own alert
+switch and severity level still apply. Deleting a project removes it from every scope; a scope
+left with no projects sends nothing rather than widening to every project.
 
 ## Connector and delivery management
 
-- `GET /api/connectors`: non-secret configuration, enabled state, verification state, and whether
-  environment credentials are configured.
-- `POST /api/connectors/{email|telegram}/test`: queue a test to a verified, enabled destination.
-- `POST /api/connectors/{channel}/disable` or `/enable`: pause/resume normal delivery; enabling
+- `GET /api/connectors`: every destination with its `id`, `channel` (`email` or `telegram`),
+  `label`, non-secret configuration, enabled and verification state, project scope
+  (`all_projects`, `project_ids`), `removed_at`, and whether environment credentials are configured.
+  Removed Telegram chats are listed so the delivery log can name them; their configuration is empty.
+- `POST /api/connectors/{connector_id}/test`: queue a test to a verified, enabled destination.
+- `POST /api/connectors/{connector_id}/disable` or `/enable`: pause/resume normal delivery; enabling
   requires prior verification. An already in-flight provider request cannot be recalled.
 - `GET /api/notifications/deliveries?limit=50&offset=0`: delivery state, attempts, timestamps,
   provider reference, and sanitized error code. Message bodies and verification codes are excluded.

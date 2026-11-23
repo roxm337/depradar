@@ -15,11 +15,11 @@ class Notifier:
         self.settings = settings
 
     def __call__(
-        self, connector_id: str, config: dict[str, Any], message: Message, delivery_id: str
+        self, channel: str, config: dict[str, Any], message: Message, delivery_id: str
     ) -> str:
-        if connector_id == "email":
+        if channel == "email":
             email = EmailConfig.model_validate(config)
             return send_email(self.settings, email, message, delivery_id)
-        if connector_id == "telegram":
+        if channel == "telegram":
             return send_telegram(self.settings, config, message, delivery_id)
         raise DeliveryFailure("unknown_connector", permanent=True)

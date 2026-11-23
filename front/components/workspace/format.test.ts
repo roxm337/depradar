@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { Inventory, Project, Scan } from "../../lib/api.ts";
-import { channelLabel, deliveryEvent, latestPerTarget, projectCoverage, retiredTargets, scanEvent, sentenceCase, workspaceCoverage } from "./format.ts";
+import type { Connector, Inventory, Project, Scan } from "../../lib/api.ts";
+import { channelLabel, connectorName, deliveryDestination, deliveryEvent, scopeSummary, latestPerTarget, projectCoverage, retiredTargets, scanEvent, sentenceCase, workspaceCoverage } from "./format.ts";
 
 const P = "project-1";
 
@@ -139,6 +139,25 @@ describe("activity labels", () => {
     assert.equal(deliveryEvent("new_kind", "failed"), "New kind failed");
     assert.equal(channelLabel("telegram"), "Telegram");
     assert.equal(sentenceCase("smtp_timeout"), "Smtp timeout");
+  });
+
+  test("deliveries name the Telegram chat they went to, even after it was removed", () => {
+    const chat = (id: string, label: string, removed_at: string | null = null): Connector => ({ id, channel: "telegram", label, enabled: true, verified_at: "2026-11-01T00:00:00Z", removed_at, config: {}, all_projects: true, project_ids: [], credential_configured: true });
+    const connectors = [chat("telegram-1", "Hamza"), chat("telegram-2", "", "2026-11-02T00:00:00Z"), { ...chat("email", ""), channel: "email" as const }];
+    assert.deepEqual(deliveryDestination(connectors, "telegram-1"), { channel: "telegram", label: "Telegram · Hamza" });
+    assert.deepEqual(deliveryDestination(connectors, "telegram-2"), { channel: "telegram", label: "Telegram · Telegram chat (removed)" });
+    assert.deepEqual(deliveryDestination(connectors, "email"), { channel: "email", label: "Email" });
+    // Retention may have forgotten a removed chat while its deliveries remain on screen.
+    assert.deepEqual(deliveryDestination([], "telegram-9"), { channel: "telegram", label: "Telegram" });
+    assert.equal(connectorName({ channel: "telegram", label: "" }), "Telegram chat");
+  });
+
+  test("a destination's projects read in a few words", () => {
+    const projects = [project("a"), project("b"), project("c")].map((row, index) => ({ ...row, name: ["Web", "API", "Shop"][index] }));
+    assert.equal(scopeSummary({ all_projects: true, project_ids: [] }, projects), "All projects");
+    assert.equal(scopeSummary({ all_projects: false, project_ids: ["a", "b"] }, projects), "Web, API");
+    assert.equal(scopeSummary({ all_projects: false, project_ids: ["a", "b", "c"] }, projects), "3 projects");
+    assert.equal(scopeSummary({ all_projects: false, project_ids: ["deleted"] }, projects), "No projects");
   });
 
   test("scans read as their outcome, naming CI checks", () => {
