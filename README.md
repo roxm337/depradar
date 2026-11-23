@@ -229,7 +229,8 @@ call is audited. See [AI assistants](docs/MCP.md).
 Set `DEPRADAR_SMTP_PASSWORD` and/or `DEPRADAR_TELEGRAM_BOT_TOKEN` in your private environment,
 then restart API and worker. Configure email through `PUT /api/connectors/email` and enter the
 code sent to that address. Telegram pairing returns a one-time command to send to your bot in a
-private chat. Unverified destinations cannot receive normal vulnerability alerts.
+private chat; pair one chat per developer so everyone gets the alerts. Any destination can be
+limited to some projects. Unverified destinations cannot receive normal vulnerability alerts.
 
 Use `PUT /api/projects/{id}/monitoring` with `{"enabled":true,"interval_hours":24}` to schedule
 checks of current inventories. Configure severity thresholds, timezone, daily digests, and message

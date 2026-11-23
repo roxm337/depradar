@@ -86,13 +86,13 @@ Failed or partial scans cannot resolve findings. Risk acceptance is not a fix. P
 
 ## Email and Telegram
 
-Start with one global email destination and one personal Telegram chat, plus per-project enable/disable and severity overrides. Offer an explicit initial-backlog summary, immediate urgent alerts, daily nonurgent digests, and quiet hours. Avoid resending unchanged findings after every scan.
+One global email destination and up to 20 paired private Telegram chats (one per developer), each optionally limited to some projects, plus per-project enable/disable and severity overrides. Offer an explicit initial-backlog summary, immediate urgent alerts, daily nonurgent digests, and quiet hours. Avoid resending unchanged findings after every scan.
 
 Messages contain project, package/version, advisory, severity, available fix, and dashboard link. Explain when the configured dashboard URL only works on the owner's network. Let the owner control whether private project/package details appear in external messages.
 
 SMTP: support TLS, connection tests, escaped templates, retries, and recorded failures. Server acceptance is not proof of inbox delivery or reading. Provider-specific bounce callbacks are deferred until needed.
 
-Telegram: protect the bot token, bind the personal chat through a short-lived one-time challenge, and verify with a test message. Temporary long polling during setup avoids requiring a public webhook. Handle rate limits and token/destination revocation. State-changing chat commands and group workflows are deferred; use authenticated dashboard links.
+Telegram: protect the bot token, bind each private chat through a short-lived one-time challenge, and verify with a test message. Temporary long polling during setup avoids requiring a public webhook. Handle rate limits and token/destination revocation. State-changing chat commands and group workflows are deferred; use authenticated dashboard links.
 
 Persist finding changes and outbox events in one database transaction. Track destination, attempts, retry time, provider response, and final status. Retry transient failures with bounded backoff and provider retry hints. Show exhausted deliveries and allow replay. Stable event/delivery keys suppress routine duplicates; an ambiguous provider timeout can still cause duplicate external delivery.
 
