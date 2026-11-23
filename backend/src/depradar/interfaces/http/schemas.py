@@ -142,6 +142,25 @@ class VerificationInput(BaseModel):
     code: str = Field(min_length=8, max_length=100)
 
 
+class TelegramPairInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Omit to pair a new chat; give a recipient's ID to pair it again.
+    connector_id: str | None = Field(default=None, max_length=20)
+    label: str = Field(default="", max_length=80)
+
+
+class TelegramConfirmInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    connector_id: str | None = Field(default=None, max_length=20)
+
+
+class ConnectorUpdateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str | None = Field(default=None, max_length=80)
+    all_projects: bool | None = None
+    project_ids: list[UUID] | None = Field(default=None, max_length=500)
+
+
 class PolicyInput(BaseModel):
     immediate_min_severity: Literal["low", "medium", "high", "critical"] = "high"
     timezone: str = "UTC"

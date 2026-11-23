@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, distinct, func, or_, select, update
+from sqlalchemy import delete, distinct, exists, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from depradar.application.components import current_snapshots
@@ -15,6 +15,8 @@ from depradar.domain.entities import (
     AuditEvent,
     ChangeEvent,
     ComponentOccurrence,
+    Connector,
+    ConnectorProject,
     Delivery,
     FileDeletion,
     Finding,
@@ -100,6 +102,9 @@ def purge_project(db: Session, project: Project, dashboard_url: str = "") -> Non
     db.execute(delete(ApiToken).where(ApiToken.project_id == project.id))
     db.execute(delete(TrustedIdentity).where(TrustedIdentity.project_id == project.id))
     db.execute(delete(SecurityPolicy).where(SecurityPolicy.project_id == project.id))
+    # A destination limited to this project keeps its other projects, or none at all: it never
+    # widens to every project on its own.
+    db.execute(delete(ConnectorProject).where(ConnectorProject.project_id == project.id))
     db.execute(delete(GateDecision).where(GateDecision.project_id == project.id))
     for inventory in db.scalars(select(Inventory).where(Inventory.project_id == project.id)):
         if db.get(FileDeletion, inventory.id) is None:
@@ -142,6 +147,13 @@ def retention(db: Session, store: InventoryStore, state: SystemState) -> dict[st
             or_(Delivery.batch_id.is_(None), Delivery.batch_id.not_in(active_batches)),
         )
     )
+    # A removed destination is kept only while delivery history still names it.
+    gone = select(Connector.id).where(
+        Connector.removed_at.is_not(None),
+        ~exists().where(Delivery.connector_id == Connector.id),
+    )
+    db.execute(delete(ConnectorProject).where(ConnectorProject.connector_id.in_(gone)))
+    db.execute(delete(Connector).where(Connector.id.in_(gone)))
     # Search reads only each manifest's current snapshot, so older and retired snapshots drop
     # their package lists now, even when their scans and inventory stay as audit evidence.
     current = {inventory.id for inventory in current_snapshots(db)}

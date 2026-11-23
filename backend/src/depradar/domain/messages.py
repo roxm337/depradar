@@ -3,7 +3,7 @@
 Composition decides what a message may reveal; channel adapters only format it.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from urllib.parse import quote
 
@@ -206,6 +206,7 @@ def summary_message(
     details: bool,
     channel: str,
     policy: NotificationPolicy | None,
+    scope: Sequence[str] | None = None,
 ) -> Message:
     total = sum(count for _, count in counts)
     lead = "There are no open findings right now. DepRadar alerts you here when that changes."
@@ -223,9 +224,29 @@ def summary_message(
         items=tuple(sorted(items, key=rank)) if details else (),
         more=max(total - len(items), 0) if details else 0,
         counts=counts,
-        note=schedule_note(policy),
+        note=" ".join(
+            part for part in (scope_note(scope, details, channel), schedule_note(policy)) if part
+        ),
         action=("Review findings", "/findings"),
     )
+
+
+def scope_label(scope: Sequence[str] | None, details: bool) -> str:
+    """The projects a destination covers (None: every project); names only if details are on."""
+    if scope is None:
+        return "All projects"
+    if not scope:
+        return "No projects"
+    return ", ".join(scope) if details else plural(len(scope), "selected project")
+
+
+def scope_note(scope: Sequence[str] | None, details: bool, channel: str) -> str:
+    if scope is None:
+        return ""
+    where = "this chat" if channel == "telegram" else "this address"
+    if not scope:
+        return f"No projects are selected for {where}, so it receives no alerts."
+    return f"Alerts to {where} cover {scope_label(scope, details)} only."
 
 
 def schedule_note(policy: NotificationPolicy | None) -> str:
@@ -246,12 +267,15 @@ def schedule_note(policy: NotificationPolicy | None) -> str:
     return text
 
 
-def connector_test_message(channel: str, policy: NotificationPolicy | None) -> Message:
+def connector_test_message(
+    channel: str, policy: NotificationPolicy | None, scope: Sequence[str] | None = None
+) -> Message:
     facts: tuple[tuple[str, str], ...] = ()
     if policy:
         start, end = policy.quiet_hours_start, policy.quiet_hours_end
         quiet = "Off" if start is None or end is None else f"{start:02d}:00–{end:02d}:00"
         facts = (
+            ("Projects", scope_label(scope, policy.include_details)),
             ("Immediate alerts", IMMEDIATE.get(policy.immediate_min_severity, "High and critical")),
             ("Daily digest", f"{policy.digest_hour:02d}:00 · {policy.timezone}"),
             ("Quiet hours", quiet),

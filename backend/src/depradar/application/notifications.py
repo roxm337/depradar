@@ -12,6 +12,7 @@ from depradar.config import Settings
 from depradar.domain.entities import (
     ChangeEvent,
     Connector,
+    ConnectorProject,
     Delivery,
     DeliveryAttempt,
     Finding,
@@ -72,6 +73,27 @@ def source(db: Session, delivery: Delivery) -> tuple[ChangeEvent | None, Finding
     return change, db.get(Finding, change.finding_id) if change else None
 
 
+def covers(db: Session, connector: Connector, project_id: str) -> bool:
+    """Whether the destination takes alerts for the project."""
+    return connector.all_projects or (
+        db.get(ConnectorProject, (connector.id, project_id)) is not None
+    )
+
+
+def scope_projects(db: Session, connector: Connector) -> list[str] | None:
+    """Names of the projects a limited destination covers, or None when it covers every one."""
+    if connector.all_projects:
+        return None
+    return list(
+        db.scalars(
+            select(Project.name)
+            .join(ConnectorProject, ConnectorProject.project_id == Project.id)
+            .where(ConnectorProject.connector_id == connector.id)
+            .order_by(Project.name)
+        )
+    )
+
+
 def suppressed(db: Session, delivery: Delivery) -> bool:
     """One eligibility rule for queued alert work, applied when digesting and when sending."""
     change, finding = source(db, delivery)
@@ -83,7 +105,11 @@ def suppressed(db: Session, delivery: Delivery) -> bool:
     ):
         return True
     project = db.get(Project, delivery.project_id) if delivery.project_id else None
-    return project is not None and not project.notifications_enabled
+    if project is not None and not project.notifications_enabled:
+        return True
+    # The owner may have narrowed this destination's projects since the alert was queued.
+    connector = db.get(Connector, delivery.connector_id)
+    return project is not None and connector is not None and not covers(db, connector, project.id)
 
 
 def entry(db: Session, finding: Finding, change: str = "") -> Item:
@@ -94,6 +120,15 @@ def entry(db: Session, finding: Finding, change: str = "") -> Item:
 def open_summary(db: Session, connector: Connector) -> Message:
     policy = db.get(NotificationPolicy, 1)
     is_open = Finding.status == "open"
+    if not connector.all_projects:
+        is_open = and_(
+            is_open,
+            Finding.project_id.in_(
+                select(ConnectorProject.project_id).where(
+                    ConnectorProject.connector_id == connector.id
+                )
+            ),
+        )
     urgent = db.scalars(
         select(Finding)
         .where(is_open)
@@ -111,9 +146,16 @@ def open_summary(db: Session, connector: Connector) -> Message:
         tuple((key, totals[key]) for key in SEVERITIES if key in totals),
         projects or 0,
         bool(policy and policy.include_details),
-        connector.id,
+        connector.channel,
         policy,
+        scope_projects(db, connector),
     )
+
+
+def channel_test_message(
+    db: Session, connector: Connector, policy: NotificationPolicy | None
+) -> Message:
+    return connector_test_message(connector.channel, policy, scope_projects(db, connector))
 
 
 def queue_initial_summary(db: Session, connector: Connector, settings: Settings) -> None:
@@ -134,7 +176,7 @@ def compose(
         recipient = str(connector.config.get("recipient", ""))
         return verification_message(delivery.body.splitlines()[1], recipient)
     if delivery.kind == "test":
-        return connector_test_message(connector.id, policy)
+        return channel_test_message(db, connector, policy)
     if delivery.kind == "summary":
         return open_summary(db, connector)
     if delivery.kind in {"digest", "initial_scan"}:
@@ -169,9 +211,21 @@ def route_outbox(db: Session, settings: Settings) -> int:
     assert policy is not None
     connectors = list(
         db.scalars(
-            select(Connector).where(Connector.enabled.is_(True), Connector.verified_at.is_not(None))
+            select(Connector).where(
+                Connector.enabled.is_(True),
+                Connector.verified_at.is_not(None),
+                Connector.removed_at.is_(None),
+            )
         )
     )
+    # Destinations limited to some projects, with the projects each one covers.
+    scopes: dict[str, set[str]] = {c.id: set() for c in connectors if not c.all_projects}
+    for connector_id, project_id in db.execute(
+        select(ConnectorProject.connector_id, ConnectorProject.project_id).where(
+            ConnectorProject.connector_id.in_(scopes)
+        )
+    ):
+        scopes[connector_id].add(project_id)
     events = list(
         db.scalars(
             select(OutboxEvent)
@@ -235,6 +289,8 @@ def route_outbox(db: Session, settings: Settings) -> int:
                         # Summary covers pre-verification history; avoid replaying a flood.
                         if connector.verified_at and connector.verified_at > event.created_at:
                             continue
+                        if finding.project_id not in scopes.get(connector.id, {finding.project_id}):
+                            continue
                         available_at = quiet_end_at(utcnow(), policy)
                         initial = "initial_scan" in event.payload
                         delivery = Delivery(
@@ -273,7 +329,11 @@ def prepare_digest(db: Session, settings: Settings) -> None:
     if quiet_end_at(utcnow(), policy) > utcnow():
         return
     for connector in db.scalars(
-        select(Connector).where(Connector.enabled.is_(True), Connector.verified_at.is_not(None))
+        select(Connector).where(
+            Connector.enabled.is_(True),
+            Connector.verified_at.is_not(None),
+            Connector.removed_at.is_(None),
+        )
     ):
         deliveries = list(
             db.scalars(
@@ -413,11 +473,11 @@ def deliver_once(
         message = compose(db, delivery, connector, policy, active)
         delivery.subject = message.subject[:200]
         delivery.body = plain(message, settings.dashboard_url)
-        delivery_id, connector_id, config = delivery.id, connector.id, dict(connector.config)
+        delivery_id, channel, config = delivery.id, connector.channel, dict(connector.config)
     failure: DeliveryFailure | None = None
     provider_id = ""
     try:
-        provider_id = sender(connector_id, config, message, delivery_id)
+        provider_id = sender(channel, config, message, delivery_id)
     except DeliveryFailure as exc:
         failure = exc
     except Exception:

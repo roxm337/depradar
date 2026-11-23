@@ -3,16 +3,19 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 
 from depradar.application import connectors
 from depradar.domain.connectors import EmailConfig
 from depradar.domain.entities import Delivery, DeliveryAttempt
 from depradar.interfaces.http.dependencies import Config, Db, Updates, require_session
 from depradar.interfaces.http.schemas import (
+    ConnectorUpdateInput,
     DeliveryAttemptOutput,
     DeliveryOutput,
     PolicyInput,
+    TelegramConfirmInput,
+    TelegramPairInput,
     VerificationInput,
 )
 
@@ -37,30 +40,61 @@ def verify_email(body: VerificationInput, db: Db, settings: Config) -> dict[str,
 
 
 @router.post("/connectors/telegram/pair")
-def pair_telegram(db: Db, settings: Config) -> dict[str, str]:
-    command = connectors.pair_telegram(db, settings)
-    return {"command": command, "instruction": "Send this to your bot in a private chat"}
+def pair_telegram(
+    db: Db,
+    settings: Config,
+    body: Annotated[TelegramPairInput | None, Body()] = None,
+) -> dict[str, str]:
+    body = body or TelegramPairInput()
+    connector_id, command = connectors.pair_telegram(db, settings, body.connector_id, body.label)
+    return {
+        "connector_id": connector_id,
+        "command": command,
+        "instruction": "Send this to your bot in a private chat",
+    }
 
 
 @router.post("/connectors/telegram/confirm")
-def confirm_telegram(db: Db, settings: Config, updates: Updates) -> dict[str, str]:
-    matched = connectors.confirm_telegram(db, settings, updates)
+def confirm_telegram(
+    db: Db,
+    settings: Config,
+    updates: Updates,
+    body: Annotated[TelegramConfirmInput | None, Body()] = None,
+) -> dict[str, str]:
+    connector_id = body.connector_id if body else None
+    matched = connectors.confirm_telegram(db, settings, updates, connector_id)
     return {"status": "verified" if matched else "waiting_for_private_chat_command"}
 
 
-@router.post("/connectors/{channel}/disable", status_code=204)
-def disable_connector(channel: str, db: Db) -> None:
-    connectors.disable(db, channel)
+@router.patch("/connectors/{connector_id}", status_code=204)
+def update_connector(connector_id: str, body: ConnectorUpdateInput, db: Db) -> None:
+    connectors.set_scope(
+        db,
+        connector_id,
+        label=body.label,
+        all_projects=body.all_projects,
+        project_ids=None if body.project_ids is None else [str(p) for p in body.project_ids],
+    )
 
 
-@router.post("/connectors/{channel}/test", status_code=202)
-def test_connector(channel: str, db: Db, settings: Config) -> dict[str, str]:
-    return {"delivery_id": connectors.send_test(db, settings, channel)}
+@router.delete("/connectors/{connector_id}", status_code=204)
+def remove_connector(connector_id: str, db: Db) -> None:
+    connectors.remove(db, connector_id)
 
 
-@router.post("/connectors/{channel}/enable", status_code=204)
-def enable_connector(channel: str, db: Db) -> None:
-    connectors.enable(db, channel)
+@router.post("/connectors/{connector_id}/disable", status_code=204)
+def disable_connector(connector_id: str, db: Db) -> None:
+    connectors.disable(db, connector_id)
+
+
+@router.post("/connectors/{connector_id}/test", status_code=202)
+def test_connector(connector_id: str, db: Db, settings: Config) -> dict[str, str]:
+    return {"delivery_id": connectors.send_test(db, settings, connector_id)}
+
+
+@router.post("/connectors/{connector_id}/enable", status_code=204)
+def enable_connector(connector_id: str, db: Db) -> None:
+    connectors.enable(db, connector_id)
 
 
 @router.get("/notifications/deliveries", response_model=list[DeliveryOutput])
