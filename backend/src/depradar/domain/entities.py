@@ -226,6 +226,8 @@ class SystemState(Base):
     scanner_available: Mapped[bool | None] = mapped_column()
     last_intelligence_refresh_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     next_intelligence_refresh_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
+    # Telegram confirms updates per bot, so every paired chat shares one offset.
+    telegram_update_offset: Mapped[int] = mapped_column(default=0)
 
 
 class NotificationPolicy(Base):
@@ -242,16 +244,33 @@ class NotificationPolicy(Base):
 
 
 class Connector(Base):
+    """One notification destination: the email address, or one paired Telegram chat."""
+
     __tablename__ = "connector"
     id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(20))
+    # The owner's name for the destination, such as whose Telegram chat it is.
+    label: Mapped[str] = mapped_column(String(80), default="")
     config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(default=True)
     generation: Mapped[int] = mapped_column(default=1)
     verified_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
     challenge_hash: Mapped[str | None] = mapped_column(String(64))
     challenge_expires_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
-    update_offset: Mapped[int] = mapped_column(default=0)
     next_send_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow)
+    # False limits the destination to the projects listed in connector_project.
+    all_projects: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(UtcTimestamp(), default=utcnow)
+    # Removed destinations stay as rows so their delivery history keeps its name.
+    removed_at: Mapped[datetime | None] = mapped_column(UtcTimestamp())
+
+
+class ConnectorProject(Base):
+    __tablename__ = "connector_project"
+    connector_id: Mapped[str] = mapped_column(ForeignKey("connector.id"), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class Delivery(Base):

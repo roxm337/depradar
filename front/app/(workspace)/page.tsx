@@ -6,7 +6,7 @@ import "./overview.css";
 import { Icon } from "@/components/icon";
 import { AgeBars, TrendChart, WINDOWS } from "@/components/workspace/charts";
 import { useWorkspace } from "@/components/workspace/context";
-import { byPriority, channelLabel, countBySeverity, coverageLabel, deliveryEvent, projectCoverage, relativeTime, scanEvent, scanLabel, scanTone, severityRank, workspaceCoverage } from "@/components/workspace/format";
+import { byPriority, countBySeverity, deliveryDestination, coverageLabel, deliveryEvent, projectCoverage, relativeTime, scanEvent, scanLabel, scanTone, severityRank, workspaceCoverage } from "@/components/workspace/format";
 import { ageBuckets, change, DAY, medianResolveDays, openSeries, pastTarget, TARGET_DAYS, urgent } from "@/components/workspace/trend";
 import { Empty, PageHead, Pkg, Segmented, Sev, Sheet, SkeletonRows, StackBar } from "@/components/workspace/ui";
 
@@ -25,7 +25,7 @@ function Delta({ value }: { value: number | null }) {
 
 export default function OverviewPage() {
   const workspace = useWorkspace();
-  const { findings, projects, scans, inventories, deliveries, tokens, health, now, ready } = workspace;
+  const { findings, projects, scans, inventories, connectors, deliveries, tokens, health, now, ready } = workspace;
   const [windowDays, setWindowDays] = useState("90");
   const loaded = ready && now > 0;
   const open = useMemo(() => findings.filter((finding) => finding.status === "open").sort(byPriority), [findings]);
@@ -49,7 +49,7 @@ export default function OverviewPage() {
   const checks = scans.filter((scan) => scan.mode === "check" && now && now - Date.parse(scan.created_at) < 7 * DAY).length;
   const activity = [
     ...scans.slice(0, 8).map((scan) => ({ id: scan.id, at: scan.created_at, tone: scanTone(scan), title: scanEvent(scan), detail: `${names.get(scan.project_id) ?? "Project"} · ${plural(scan.package_count, "package")}` })),
-    ...deliveries.slice(0, 5).map((delivery) => ({ id: delivery.id, at: delivery.created_at, tone: delivery.status === "failed" ? "dot-bad" : delivery.status === "accepted" ? "dot-ok" : "dot-warn", title: deliveryEvent(delivery.kind, delivery.status), detail: `${channelLabel(delivery.connector_id)}${delivery.last_error ? ` · ${delivery.last_error}` : ""}` })),
+    ...deliveries.slice(0, 5).map((delivery) => ({ id: delivery.id, at: delivery.created_at, tone: delivery.status === "failed" ? "dot-bad" : delivery.status === "accepted" ? "dot-ok" : "dot-warn", title: deliveryEvent(delivery.kind, delivery.status), detail: `${deliveryDestination(connectors, delivery.connector_id).label}${delivery.last_error ? ` · ${delivery.last_error}` : ""}` })),
     ...tokens.slice(0, 3).map((token) => ({ id: token.id, at: token.revoked_at ?? token.created_at, tone: token.revoked_at ? "" : "dot-ok", title: `CI/CD token ${token.revoked_at ? "revoked" : "created"}`, detail: token.name })),
   ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 7);
   const lede = !projects.length

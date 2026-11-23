@@ -34,7 +34,7 @@ class IdentityRejected(Exception):
 Scanner = Callable[[bytes, str], ScanResponse]
 # -> whether the scanner service answers its health check
 ScannerProbe = Callable[[], bool]
-# (connector id, connector config, message, delivery id) -> provider reference
+# (channel, destination config, message, delivery id) -> provider reference
 NotificationSender = Callable[[str, dict[str, Any], Message, str], str]
 # (update offset) -> pending Telegram bot updates
 TelegramUpdates = Callable[[int], list[dict[str, Any]]]

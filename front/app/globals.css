@@ -508,7 +508,12 @@ button.list-row:hover { background: var(--surface-2); }
 .channel-copy { display: grid; gap: 2px; min-width: 0; }
 .channel-copy b { font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .channel-copy small { color: var(--text-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.channel-actions { display: flex; gap: 6px; }
+.channel-actions { display: flex; align-items: center; gap: 6px; }
+.channel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-copy small.channel-warn { color: var(--warn); }
+.channel-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.channel-add small { color: var(--text-3); font-size: 12.5px; }
+.scope-list { max-height: 260px; overflow-y: auto; }
 .notif-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; align-items: start; }
 .attempts { display: grid; gap: 8px; padding: 4px 0 2px; }
 .attempt { display: flex; gap: 10px; align-items: center; font-size: 12.5px; color: var(--text-3); }

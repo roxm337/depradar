@@ -30,7 +30,11 @@ from .test_uploads import LOCKFILE, upload
 
 def connect(harness: Harness, channel: str = "email") -> None:
     with harness.factory.begin() as db:
-        db.add(Connector(id=channel, config={}, verified_at=utcnow() - timedelta(days=1)))
+        db.add(
+            Connector(
+                id=channel, channel=channel, config={}, verified_at=utcnow() - timedelta(days=1)
+            )
+        )
         policy = db.get(NotificationPolicy, 1)
         assert policy is not None
         policy.next_digest_at = utcnow() + timedelta(days=1)
